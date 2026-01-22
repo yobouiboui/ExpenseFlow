@@ -1,0 +1,7 @@
+{
+  "name": "ExpenseFlow",
+  "description": "Smart travel expense management with AI-powered OCR and compliance email generation.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
