@@ -2,9 +2,18 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AiParsedExpense, Expense, ExpenseCategory, TripMetadata } from "../types";
 
-// Initialize Gemini Client
-// Always use process.env.API_KEY directly for initialization.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize Gemini client lazily to avoid crashing the app when no API key is set.
+let aiClient: GoogleGenAI | null = null;
+const getAiClient = () => {
+  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY (set it in .env.local) to use AI features.");
+  }
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({ apiKey });
+  }
+  return aiClient;
+};
 
 // Strict DD/MM/YYYY formatter
 const formatDate = (dateStr: string | null) => {
@@ -44,7 +53,7 @@ export const parseReceiptImage = async (base64Image: string): Promise<AiParsedEx
     `;
 
     // Use gemini-3-flash-preview for the task and configure responseSchema for JSON output.
-    const response = await ai.models.generateContent({
+    const response = await getAiClient().models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
         parts: [
@@ -150,7 +159,7 @@ export const generateReimbursementEmail = async (trip: TripMetadata, expenses: E
 
   try {
     // Use gemini-3-flash-preview and provide responseSchema for structured JSON output.
-    const response = await ai.models.generateContent({
+    const response = await getAiClient().models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {

@@ -18,7 +18,7 @@ const CategoryBadge: React.FC<{ category: ExpenseCategory }> = ({ category }) =>
     [ExpenseCategory.Transport]: 'bg-purple-50 text-purple-700 border-purple-200',
     [ExpenseCategory.Parking]: 'bg-slate-50 text-slate-600 border-slate-200',
     [ExpenseCategory.Fuel]: 'bg-red-50 text-red-700 border-red-200',
-    [ExpenseCategory.Tolls]: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    [ExpenseCategory.Tolls]: 'bg-teal-50 text-teal-700 border-teal-200',
     [ExpenseCategory.Misc]: 'bg-teal-50 text-teal-700 border-teal-200',
   };
   return <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border ${colors[category]}`}>{category}</span>;
@@ -33,7 +33,7 @@ const formatDate = (dateStr: string) => {
 const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete, onViewReceipt, isReadonly = false }) => {
   if (expenses.length === 0) {
     return (
-      <div className="text-center py-24 bg-white rounded-[2.5rem] border-2 border-dashed border-slate-100 mt-6 shadow-inner">
+      <div className="text-center py-24 glass-card rounded-[2.5rem] border-2 border-dashed border-white/70 mt-6 soft-shadow">
         <Receipt size={48} className="mx-auto text-slate-200 mb-4" />
         <p className="text-slate-400 font-black">Aucune dépense enregistrée.</p>
       </div>
@@ -41,11 +41,11 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
   }
 
   return (
-    <div className="bg-white rounded-[2rem] border border-slate-200 shadow-xl overflow-hidden mt-6">
+    <div className="glass-card rounded-[2rem] border border-white/60 soft-shadow overflow-hidden mt-6">
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-100">
+            <tr className="bg-white/70 border-b border-white/60">
               <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
               <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
               <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Lieu & Détails</th>
@@ -56,11 +56,11 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
           </thead>
           <tbody className="divide-y divide-slate-50">
             {expenses.map((expense) => (
-              <tr key={expense.id} className="hover:bg-slate-50 transition-colors group">
+              <tr key={expense.id} className="hover:bg-slate-50/70 transition-colors group">
                 <td className="px-8 py-6 text-sm font-black text-slate-900">{formatDate(expense.date)}</td>
                 <td className="px-8 py-6"><CategoryBadge category={expense.category} /></td>
                 <td className="px-8 py-6 text-sm text-slate-500 font-bold">
-                  <div className="flex items-center gap-2"><MapPin size={14} className="text-indigo-300"/> {expense.location}</div>
+                  <div className="flex items-center gap-2"><MapPin size={14} className="text-teal-400"/> {expense.location}</div>
                   
                   {/* Affichage des détails Hôtel */}
                   {expense.category === ExpenseCategory.Hotel && (
@@ -84,7 +84,7 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
                 </td>
                 <td className="px-8 py-6 text-center">
                   {expense.receiptDataUrl ? (
-                    <button type="button" onClick={() => onViewReceipt(expense.receiptDataUrl!)} className="p-3 text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 transition-all shadow-sm">
+                    <button type="button" onClick={() => onViewReceipt(expense.receiptDataUrl!)} className="p-3 text-teal-700 bg-teal-50 rounded-xl hover:bg-teal-100 transition-all shadow-sm">
                       <Receipt size={18} />
                     </button>
                   ) : <span className="text-slate-200">—</span>}
@@ -92,7 +92,7 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
                 {!isReadonly && (
                   <td className="px-8 py-6 text-right">
                     <div className="flex justify-end gap-2">
-                      <button type="button" onClick={() => onEdit(expense)} className="p-3 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all">
+                      <button type="button" onClick={() => onEdit(expense)} className="p-3 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-xl transition-all">
                         <Pencil size={18} />
                       </button>
                       <button type="button" onClick={() => onDelete(expense.id)} className="p-3 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all">
@@ -111,3 +111,4 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
 };
 
 export default ExpenseTable;
+
