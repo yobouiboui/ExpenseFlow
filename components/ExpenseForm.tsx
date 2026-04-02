@@ -158,9 +158,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
             hotelBreakfasts: aiData.hotelBreakfasts || 0
           };
         });
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        setError(`Erreur IA : ${detail}`);
+      } catch (err: unknown) {
+        console.error("❌ Gemini OCR error:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`Erreur IA : ${msg}`);
+
       } finally {
         setIsProcessing(false);
       }
@@ -170,7 +172,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (!files.length) return;
 
     setIsProcessing(true);

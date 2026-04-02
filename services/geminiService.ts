@@ -70,9 +70,9 @@ export const parseReceiptImage = async (base64Image: string): Promise<AiParsedEx
       - hotelBreakfasts (integer): Number of breakfasts charged. Look for "Breakfast", "Frühstück". Default to 0 if not found.
     `;
 
-    // Use gemini-2.0-flash for the task and configure responseSchema for JSON output.
+    // Use gemini-2.5-flash for the task and configure responseSchema for JSON output.
     const response = await getAiClient().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: {
         parts: [
           { inlineData: { mimeType: mimeType, data: cleanBase64 } },
@@ -176,9 +176,9 @@ export const generateReimbursementEmail = async (trip: TripMetadata, expenses: E
   `;
 
   try {
-    // Use gemini-2.0-flash and provide responseSchema for structured JSON output.
+    // Use gemini-2.5-flash and provide responseSchema for structured JSON output.
     const response = await getAiClient().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: { parts: [{ text: prompt }] },
       config: {
         responseMimeType: "application/json",
