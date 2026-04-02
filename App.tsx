@@ -6,8 +6,8 @@ import Modal from './components/Modal';
 import ExpenseForm from './components/ExpenseForm';
 import LoginScreen from './components/LoginScreen';
 import { Expense, TripMetadata, EmailDraft, ArchivedTrip } from './types';
-import { generateReimbursementEmail } from './services/geminiService';
-import { supabase, isSupabaseEnabled } from './services/supabaseClient';
+import { generateReimbursementEmail, saveGeminiKey, getStoredGeminiKey } from './services/geminiService';
+import { supabase, isSupabaseEnabled, saveSupabaseConfig, clearSupabaseConfig } from './services/supabaseClient';
 import type { User } from '@supabase/supabase-js';
 import JSZip from 'jszip';
 
@@ -16,6 +16,7 @@ const STORAGE_KEY_ARCHIVE = 'expenseFlow_archive_prod_v1';
 const STORAGE_KEY_TRIP = 'expenseFlow_trip_prod_v1';
 const SESSION_KEY_AUTH = 'expenseFlow_auth_prod_v1';
 const STORAGE_KEY_LAST_SYNC = 'expenseFlow_lastSync_prod_v1';
+const STORAGE_KEY_CURRENCY = 'expenseFlow_currency_v1';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -46,6 +47,83 @@ const isTripEmpty = (trip: TripMetadata) => {
   const isDefaultLocation = !location || location === 'hamburg, germany';
   return !trip.departureDate && !trip.returnDate && !trip.destinationCountry && isDefaultLocation && isDefaultName;
 };
+
+interface SupabaseConfigPanelProps {
+  isOpen: boolean;
+  onToggle: () => void;
+  configUrl: string;
+  configKey: string;
+  setConfigUrl: (v: string) => void;
+  setConfigKey: (v: string) => void;
+  onSave: () => void;
+  onClear: () => void;
+  forceOpen?: boolean;
+}
+
+function SupabaseConfigPanel({
+  isOpen, onToggle, configUrl, configKey,
+  setConfigUrl, setConfigKey, onSave, onClear, forceOpen
+}: SupabaseConfigPanelProps) {
+  const showContent = forceOpen || isOpen;
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      {!forceOpen && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full flex justify-between items-center px-4 py-3 text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 transition-all"
+        >
+          <span>Configurer Supabase</span>
+          <span>{isOpen ? '▲' : '▼'}</span>
+        </button>
+      )}
+      {showContent && (
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">URL du projet</label>
+            <input
+              type="url"
+              value={configUrl}
+              onChange={(e) => setConfigUrl(e.target.value)}
+              placeholder="https://xxxx.supabase.co"
+              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Clé anonyme (anon key)</label>
+            <input
+              type="password"
+              value={configKey}
+              onChange={(e) => setConfigKey(e.target.value)}
+              placeholder="eyJ..."
+              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={!configUrl || !configKey}
+              className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all disabled:opacity-40"
+            >
+              Sauvegarder et recharger
+            </button>
+            <button
+              type="button"
+              onClick={onClear}
+              className="px-3 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+            >
+              Réinitialiser
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            Les identifiants sont stockés localement dans ce navigateur uniquement.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem(SESSION_KEY_AUTH) === 'true');
@@ -86,6 +164,18 @@ export default function App() {
   // État pour la recherche dans les archives
   const [archiveSearchTerm, setArchiveSearchTerm] = useState('');
 
+  // Devise globale du voyage
+  const [tripCurrency, setTripCurrency] = useState(() => localStorage.getItem(STORAGE_KEY_CURRENCY) || 'EUR');
+
+  // Clé API Gemini (runtime)
+  const [geminiKeyInput, setGeminiKeyInput] = useState(() => getStoredGeminiKey());
+  const [geminiKeySaved, setGeminiKeySaved] = useState(Boolean(getStoredGeminiKey()));
+
+  // État pour le panneau de configuration Supabase
+  const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
+  const [configUrl, setConfigUrl] = useState('');
+  const [configKey, setConfigKey] = useState('');
+
   // Refs pour contrôler l'ouverture du calendrier
   const departureInputRef = useRef<HTMLInputElement>(null);
   const returnInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +185,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem(STORAGE_KEY_EXPENSES, JSON.stringify(expenses)); }, [expenses]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_ARCHIVE, JSON.stringify(archivedTrips)); }, [archivedTrips]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_TRIP, JSON.stringify(trip)); }, [trip]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
 
   const localStateEmpty = expenses.length === 0 && archivedTrips.length === 0 && isTripEmpty(trip);
   const syncEnabled = isSupabaseEnabled && !!supabaseUser;
@@ -160,9 +251,18 @@ export default function App() {
         return;
       }
 
+      // Always merge archives from remote (union by trip ID — idempotent)
+      const localArchiveIds = new Set(archivedTrips.map((t) => t.id));
+      const newRemoteArchives = safeArray(data.archived_trips).filter(
+        (t) => !localArchiveIds.has(t.id)
+      );
+      if (newRemoteArchives.length > 0) {
+        setArchivedTrips((prev) => [...prev, ...newRemoteArchives]);
+      }
+
+      // Only overwrite current expenses + trip when there is no local data
       if (localStateEmpty) {
         setExpenses(safeArray(data.expenses));
-        setArchivedTrips(safeArray(data.archived_trips));
         setTrip((data.trip as TripMetadata) || createNewTrip());
       }
 
@@ -349,6 +449,12 @@ export default function App() {
     setTrip(prev => ({ ...prev, [field]: value }));
   };
 
+  /** Change the trip currency and update all current expenses (no conversion). */
+  const handleChangeCurrency = (newCurrency: string) => {
+    setTripCurrency(newCurrency);
+    setExpenses(prev => prev.map(e => ({ ...e, currency: newCurrency })));
+  };
+
   const handleAddExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
     const newExp = { ...data, id: generateId(), tripId: trip.id } as Expense;
     setExpenses(prev => [...prev, newExp]);
@@ -407,7 +513,7 @@ export default function App() {
       `Destination: ${trip.destinationCountry || 'N/A'}`,
       `Départ: ${trip.departureDate ? new Date(trip.departureDate).toLocaleString() : 'N/A'}`,
       `Retour: ${trip.returnDate ? new Date(trip.returnDate).toLocaleString() : 'N/A'}`,
-      `Total: ${total} EUR`,
+      `Total: ${total} ${tripCurrency}`,
       '',
       '=== DÉPENSES ===',
       expenseLines || 'Aucune dépense',
@@ -683,7 +789,7 @@ export default function App() {
                     </div>
                     <div className="pt-6 border-t border-slate-100 flex justify-between items-center">
                       <div className="flex flex-col">
-                        <span className="text-2xl font-black text-teal-700">{arch.expenses.reduce((s,e)=>s+e.amount,0).toFixed(2)} EUR</span>
+                        <span className="text-2xl font-black text-teal-700">{arch.expenses.reduce((s,e)=>s+e.amount,0).toFixed(2)} {tripCurrency}</span>
                         <span className="text-[10px] font-bold text-slate-500 mt-1">{formatDate(arch.trip.departureDate || arch.archivedAt)}</span>
                       </div>
                       <button className="bg-teal-50 text-teal-700 px-4 py-2 rounded-lg font-black text-sm group-hover:bg-teal-700 group-hover:text-white transition-all">Voir détails</button>
@@ -801,7 +907,7 @@ export default function App() {
                 <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-0.5">Total</p>
                 <p className="text-3xl md:text-4xl font-black text-teal-700 leading-none">
                   {expenses.reduce((s,e)=>s+e.amount,0).toFixed(2)} 
-                  <span className="text-xl md:text-2xl text-teal-400 ml-1">EUR</span>
+                  <span className="text-xl md:text-2xl text-teal-400 ml-1">{tripCurrency}</span>
                 </p>
              </div>
 
@@ -811,7 +917,7 @@ export default function App() {
 
       {/* MODAL FORMULAIRE */}
       <Modal isOpen={isFormOpen} onClose={() => { setIsFormOpen(false); setEditingExpense(null); }} title={editingExpense ? "Modifier la facture" : "Nouvelle facture intelligente"}>
-        <ExpenseForm initialData={editingExpense} onClose={() => { setIsFormOpen(false); setEditingExpense(null); }} onSubmit={editingExpense ? handleEditExpense : handleAddExpense} />
+        <ExpenseForm initialData={editingExpense} defaultCurrency={tripCurrency} onClose={() => { setIsFormOpen(false); setEditingExpense(null); }} onSubmit={editingExpense ? handleEditExpense : handleAddExpense} />
       </Modal>
 
       {/* CONFIRMATION ARCHIVAGE */}
@@ -873,83 +979,208 @@ export default function App() {
       )}
 
       {/* MODAL SYNCHRONISATION */}
-      <Modal isOpen={isSyncModalOpen} onClose={() => setIsSyncModalOpen(false)} title="Synchronisation">
-        {!isSupabaseEnabled ? (
-          <div className="space-y-3 text-sm text-slate-600">
-            <p>Supabase n'est pas configure. Ajoute VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY dans .env.local puis relance l'app.</p>
-            <p className="text-xs text-slate-400">Etat actuel: stockage local uniquement.</p>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {supabaseUser ? (
-              <>
-                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-1">
-                  <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Compte</p>
-                  <p className="font-bold text-slate-800">{supabaseUser.email || supabaseUser.id}</p>
-                  <p className="text-xs text-slate-500">Derniere synchro: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Jamais'}</p>
+      <Modal isOpen={isSyncModalOpen} onClose={() => setIsSyncModalOpen(false)} title="Paramètres">
+        <div className="space-y-5">
+
+          {/* Logged-in view */}
+          {isSupabaseEnabled && supabaseUser && (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-1">
+                <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Compte</p>
+                <p className="font-bold text-slate-800">{supabaseUser.email || supabaseUser.id}</p>
+                <p className="text-xs text-slate-500">Derniere synchro: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Jamais'}</p>
+              </div>
+              {syncError && (
+                <div className="text-xs text-red-600 font-semibold space-y-1">
+                  <p>Erreur: {syncError}</p>
+                  {syncError === 'Failed to fetch' && (
+                    <p className="font-normal text-red-500">
+                      Connexion impossible. Vérifiez que votre projet Supabase est actif (non mis en pause) ou reconfigurez vos identifiants ci-dessous.
+                    </p>
+                  )}
                 </div>
-                {syncError && (
-                  <div className="text-xs text-red-600 font-semibold">Erreur: {syncError}</div>
-                )}
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={handlePullFromSupabase}
-                    className="w-full bg-slate-100 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all"
-                  >
-                    Charger depuis Supabase
-                  </button>
-                  <button
-                    onClick={handlePushToSupabase}
-                    className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
-                  >
-                    Envoyer vers Supabase
-                  </button>
-                  <button
-                    onClick={handleSupabaseSignOut}
-                    className="w-full bg-white text-slate-600 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all"
-                  >
-                    Deconnexion
-                  </button>
-                </div>
-              </>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSendMagicLink();
-                }}
-                className="space-y-4"
-              >
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">Email</label>
-                  <input
-                    type="email"
-                    value={syncEmail}
-                    onChange={(e) => setSyncEmail(e.target.value)}
-                    placeholder="prenom.nom@entreprise.com"
-                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
-                  />
-                </div>
-                {syncError && (
-                  <div className="text-xs text-red-600 font-semibold">Erreur: {syncError}</div>
-                )}
+              )}
+              <div className="flex flex-col gap-3">
                 <button
-                  type="submit"
-                  className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
-                  disabled={!syncEmail}
+                  onClick={handlePullFromSupabase}
+                  className="w-full bg-slate-100 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all"
                 >
-                  Envoyer le lien magique
+                  Charger depuis Supabase
                 </button>
-                <p className="text-xs text-slate-500">
-                  Utilise le meme email sur un autre terminal pour recuperer l'etat sauvegarde.
-                </p>
-              </form>
-            )}
-            {isSyncing && (
-              <p className="text-xs text-slate-500">Synchronisation en cours...</p>
-            )}
+                <button
+                  onClick={handlePushToSupabase}
+                  className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
+                >
+                  Envoyer vers Supabase
+                </button>
+                <button
+                  onClick={handleSupabaseSignOut}
+                  className="w-full bg-white text-slate-600 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all"
+                >
+                  Deconnexion
+                </button>
+              </div>
+              {syncError === 'Failed to fetch' && (
+                <SupabaseConfigPanel
+                  isOpen={isConfigPanelOpen}
+                  onToggle={() => setIsConfigPanelOpen(p => !p)}
+                  configUrl={configUrl}
+                  configKey={configKey}
+                  setConfigUrl={setConfigUrl}
+                  setConfigKey={setConfigKey}
+                  onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                  onClear={clearSupabaseConfig}
+                />
+              )}
+            </>
+          )}
+
+          {/* Logged-out / magic link form */}
+          {isSupabaseEnabled && !supabaseUser && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendMagicLink();
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-2">Email</label>
+                <input
+                  type="email"
+                  value={syncEmail}
+                  onChange={(e) => setSyncEmail(e.target.value)}
+                  placeholder="prenom.nom@entreprise.com"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                />
+              </div>
+              {syncError && (
+                <div className="text-xs text-red-600 font-semibold space-y-1">
+                  <p>Erreur: {syncError}</p>
+                  {syncError === 'Failed to fetch' && (
+                    <p className="font-normal text-red-500">
+                      Connexion impossible. Vérifiez que votre projet Supabase est actif (non mis en pause) ou reconfigurez vos identifiants ci-dessous.
+                    </p>
+                  )}
+                </div>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
+                disabled={!syncEmail}
+              >
+                Envoyer le lien magique
+              </button>
+              <p className="text-xs text-slate-500">
+                Utilise le meme email sur un autre terminal pour recuperer l'etat sauvegarde.
+              </p>
+              <SupabaseConfigPanel
+                isOpen={isConfigPanelOpen}
+                onToggle={() => setIsConfigPanelOpen(p => !p)}
+                configUrl={configUrl}
+                configKey={configKey}
+                setConfigUrl={setConfigUrl}
+                setConfigKey={setConfigKey}
+                onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                onClear={clearSupabaseConfig}
+              />
+            </form>
+          )}
+
+          {/* Supabase not configured at all */}
+          {!isSupabaseEnabled && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">Aucune configuration Supabase détectée. Entrez vos identifiants ci-dessous pour activer la synchronisation.</p>
+              <SupabaseConfigPanel
+                isOpen={true}
+                onToggle={() => {}}
+                configUrl={configUrl}
+                configKey={configKey}
+                setConfigUrl={setConfigUrl}
+                setConfigKey={setConfigKey}
+                onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                onClear={clearSupabaseConfig}
+                forceOpen
+              />
+            </div>
+          )}
+
+          {isSyncing && (
+            <p className="text-xs text-slate-500">Synchronisation en cours...</p>
+          )}
+
+          {/* ── DEVISE ── */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
+              <span className="text-xs font-black uppercase text-slate-500 tracking-widest">Devise</span>
+              <span className="text-xs font-black text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">{tripCurrency}</span>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Devise du voyage</label>
+                <select
+                  value={tripCurrency}
+                  onChange={(e) => handleChangeCurrency(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                >
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CHF">CHF (Fr)</option>
+                  <option value="JPY">JPY (¥)</option>
+                  <option value="CAD">CAD (CA$)</option>
+                  <option value="NOK">NOK (kr)</option>
+                  <option value="SEK">SEK (kr)</option>
+                  <option value="DKK">DKK (kr)</option>
+                </select>
+              </div>
+              <p className="text-xs text-slate-400">Change la devise pour toutes les dépenses existantes (sans conversion).</p>
+            </div>
           </div>
-        )}
+
+          {/* ── IA GEMINI ── */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
+              <span className="text-xs font-black uppercase text-slate-500 tracking-widest">IA Gemini</span>
+              <span className={`text-xs font-black px-2 py-0.5 rounded-full border ${geminiKeySaved ? 'text-teal-700 bg-teal-50 border-teal-200' : 'text-amber-600 bg-amber-50 border-amber-200'}`}>
+                {geminiKeySaved ? 'CLÉ ACTIVE' : 'AUCUNE CLÉ'}
+              </span>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Clé API Gemini</label>
+                <input
+                  type="password"
+                  value={geminiKeyInput}
+                  onChange={(e) => setGeminiKeyInput(e.target.value)}
+                  placeholder="AIza..."
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { saveGeminiKey(geminiKeyInput); setGeminiKeySaved(Boolean(geminiKeyInput.trim())); }}
+                  disabled={!geminiKeyInput.trim()}
+                  className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all disabled:opacity-40"
+                >
+                  Enregistrer la clé
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { saveGeminiKey(''); setGeminiKeyInput(''); setGeminiKeySaved(false); }}
+                  className="px-3 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+                >
+                  Effacer
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">
+                La clé est stockée localement dans ce navigateur. Obtiens-la sur <span className="font-semibold">aistudio.google.com</span>.
+              </p>
+            </div>
+          </div>
+
+        </div>
       </Modal>
 
       {/* VUE ARCHIVE */}
@@ -974,7 +1205,7 @@ export default function App() {
               <ExpenseTable expenses={selectedArchive.expenses} isReadonly onEdit={()=>{}} onDelete={()=>{}} onViewReceipt={setPreviewImage} />
             </div>
             <div className="p-10 border-t bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-6">
-              <div className="text-5xl font-black text-teal-700">Total : {selectedArchive.expenses.reduce((s,e)=>s+e.amount,0).toFixed(2)} EUR</div>
+              <div className="text-5xl font-black text-teal-700">Total : {selectedArchive.expenses.reduce((s,e)=>s+e.amount,0).toFixed(2)} {selectedArchive.expenses[0]?.currency || tripCurrency}</div>
               <div className="flex gap-4 w-full md:w-auto">
                 <button onClick={() => handleDownloadZip(selectedArchive.expenses)} className="flex-1 px-8 py-4 bg-white border-2 border-slate-200 rounded-2xl font-black text-slate-900 hover:bg-slate-50 transition-all">Télécharger ZIP</button>
                 <button onClick={() => handleGenerateEmail(selectedArchive.trip, selectedArchive.expenses)} className="flex-1 px-10 py-4 bg-teal-700 text-white font-black rounded-2xl shadow-xl hover:bg-teal-800 transition-all">Regénérer Rapport Email</button>
