@@ -8,6 +8,8 @@ const LS_KEY_GEMINI = 'expenseFlow_gemini_key';
 export function saveGeminiKey(key: string): void {
   if (key.trim()) localStorage.setItem(LS_KEY_GEMINI, key.trim());
   else localStorage.removeItem(LS_KEY_GEMINI);
+  // Reset cached client so next call picks up the new key
+  aiClient = null;
 }
 
 /** Return the currently stored runtime key (empty string if none). */
@@ -15,8 +17,7 @@ export function getStoredGeminiKey(): string {
   return localStorage.getItem(LS_KEY_GEMINI) || '';
 }
 
-// Initialize Gemini client lazily to avoid crashing the app when no API key is set.
-// Runtime localStorage key takes priority over build-time env vars.
+// Lazily-initialised client. Reset to null whenever the key changes.
 let aiClient: GoogleGenAI | null = null;
 const getAiClient = () => {
   const apiKey =
@@ -26,9 +27,7 @@ const getAiClient = () => {
   if (!apiKey) {
     throw new Error("Clé API Gemini manquante. Renseigne-la dans Paramètres → IA Gemini.");
   }
-  // Re-create client if localStorage key was updated since last call
-  const storedKey = localStorage.getItem(LS_KEY_GEMINI);
-  if (!aiClient || (storedKey && (aiClient as any)._apiKey !== storedKey)) {
+  if (!aiClient) {
     aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
@@ -71,9 +70,9 @@ export const parseReceiptImage = async (base64Image: string): Promise<AiParsedEx
       - hotelBreakfasts (integer): Number of breakfasts charged. Look for "Breakfast", "Frühstück". Default to 0 if not found.
     `;
 
-    // Use gemini-3-flash-preview for the task and configure responseSchema for JSON output.
+    // Use gemini-2.0-flash for the task and configure responseSchema for JSON output.
     const response = await getAiClient().models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: {
         parts: [
           { inlineData: { mimeType: mimeType, data: cleanBase64 } },
@@ -177,9 +176,9 @@ export const generateReimbursementEmail = async (trip: TripMetadata, expenses: E
   `;
 
   try {
-    // Use gemini-3-flash-preview and provide responseSchema for structured JSON output.
+    // Use gemini-2.0-flash and provide responseSchema for structured JSON output.
     const response = await getAiClient().models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: { parts: [{ text: prompt }] },
       config: {
         responseMimeType: "application/json",
