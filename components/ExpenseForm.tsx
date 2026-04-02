@@ -120,8 +120,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
         const safeDataUrl = isPdf ? dataUrl : await compressImage(dataUrl);
         const aiData = await parseReceiptImage(safeDataUrl);
         onSubmit(buildExpenseFromAi(aiData, safeDataUrl, defaultCurrency));
-      } catch {
+      } catch (err) {
         errors++;
+        const detail = err instanceof Error ? err.message : String(err);
+        setError(prev => prev ? prev : `Erreur IA (fichier ${i + 1}) : ${detail}`);
       }
     }
 
@@ -156,8 +158,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
             hotelBreakfasts: aiData.hotelBreakfasts || 0
           };
         });
-      } catch {
-        setError("L'IA n'a pas pu analyser ce document. Veuillez remplir les champs manuellement.");
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        setError(`Erreur IA : ${detail}`);
       } finally {
         setIsProcessing(false);
       }
