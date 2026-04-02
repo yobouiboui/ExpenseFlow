@@ -7,7 +7,7 @@ import ExpenseForm from './components/ExpenseForm';
 import LoginScreen from './components/LoginScreen';
 import { Expense, TripMetadata, EmailDraft, ArchivedTrip } from './types';
 import { generateReimbursementEmail } from './services/geminiService';
-import { supabase, isSupabaseEnabled } from './services/supabaseClient';
+import { supabase, isSupabaseEnabled, saveSupabaseConfig, clearSupabaseConfig } from './services/supabaseClient';
 import type { User } from '@supabase/supabase-js';
 import JSZip from 'jszip';
 
@@ -47,6 +47,83 @@ const isTripEmpty = (trip: TripMetadata) => {
   return !trip.departureDate && !trip.returnDate && !trip.destinationCountry && isDefaultLocation && isDefaultName;
 };
 
+interface SupabaseConfigPanelProps {
+  isOpen: boolean;
+  onToggle: () => void;
+  configUrl: string;
+  configKey: string;
+  setConfigUrl: (v: string) => void;
+  setConfigKey: (v: string) => void;
+  onSave: () => void;
+  onClear: () => void;
+  forceOpen?: boolean;
+}
+
+function SupabaseConfigPanel({
+  isOpen, onToggle, configUrl, configKey,
+  setConfigUrl, setConfigKey, onSave, onClear, forceOpen
+}: SupabaseConfigPanelProps) {
+  const showContent = forceOpen || isOpen;
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      {!forceOpen && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full flex justify-between items-center px-4 py-3 text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 transition-all"
+        >
+          <span>Configurer Supabase</span>
+          <span>{isOpen ? '▲' : '▼'}</span>
+        </button>
+      )}
+      {showContent && (
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">URL du projet</label>
+            <input
+              type="url"
+              value={configUrl}
+              onChange={(e) => setConfigUrl(e.target.value)}
+              placeholder="https://xxxx.supabase.co"
+              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Clé anonyme (anon key)</label>
+            <input
+              type="password"
+              value={configKey}
+              onChange={(e) => setConfigKey(e.target.value)}
+              placeholder="eyJ..."
+              className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={!configUrl || !configKey}
+              className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all disabled:opacity-40"
+            >
+              Sauvegarder et recharger
+            </button>
+            <button
+              type="button"
+              onClick={onClear}
+              className="px-3 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+            >
+              Réinitialiser
+            </button>
+          </div>
+          <p className="text-xs text-slate-400">
+            Les identifiants sont stockés localement dans ce navigateur uniquement.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem(SESSION_KEY_AUTH) === 'true');
   const [activeTab, setActiveTab] = useState<'expenses' | 'reports'>('expenses');
@@ -85,6 +162,11 @@ export default function App() {
   
   // État pour la recherche dans les archives
   const [archiveSearchTerm, setArchiveSearchTerm] = useState('');
+
+  // État pour le panneau de configuration Supabase
+  const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
+  const [configUrl, setConfigUrl] = useState('');
+  const [configKey, setConfigKey] = useState('');
 
   // Refs pour contrôler l'ouverture du calendrier
   const departureInputRef = useRef<HTMLInputElement>(null);
@@ -160,9 +242,18 @@ export default function App() {
         return;
       }
 
+      // Always merge archives from remote (union by trip ID — idempotent)
+      const localArchiveIds = new Set(archivedTrips.map((t) => t.id));
+      const newRemoteArchives = safeArray(data.archived_trips).filter(
+        (t) => !localArchiveIds.has(t.id)
+      );
+      if (newRemoteArchives.length > 0) {
+        setArchivedTrips((prev) => [...prev, ...newRemoteArchives]);
+      }
+
+      // Only overwrite current expenses + trip when there is no local data
       if (localStateEmpty) {
         setExpenses(safeArray(data.expenses));
-        setArchivedTrips(safeArray(data.archived_trips));
         setTrip((data.trip as TripMetadata) || createNewTrip());
       }
 
@@ -874,82 +965,135 @@ export default function App() {
 
       {/* MODAL SYNCHRONISATION */}
       <Modal isOpen={isSyncModalOpen} onClose={() => setIsSyncModalOpen(false)} title="Synchronisation">
-        {!isSupabaseEnabled ? (
-          <div className="space-y-3 text-sm text-slate-600">
-            <p>Supabase n'est pas configure. Ajoute VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY dans .env.local puis relance l'app.</p>
-            <p className="text-xs text-slate-400">Etat actuel: stockage local uniquement.</p>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {supabaseUser ? (
-              <>
-                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-1">
-                  <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Compte</p>
-                  <p className="font-bold text-slate-800">{supabaseUser.email || supabaseUser.id}</p>
-                  <p className="text-xs text-slate-500">Derniere synchro: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Jamais'}</p>
+        <div className="space-y-5">
+
+          {/* Logged-in view */}
+          {isSupabaseEnabled && supabaseUser && (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-1">
+                <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Compte</p>
+                <p className="font-bold text-slate-800">{supabaseUser.email || supabaseUser.id}</p>
+                <p className="text-xs text-slate-500">Derniere synchro: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Jamais'}</p>
+              </div>
+              {syncError && (
+                <div className="text-xs text-red-600 font-semibold space-y-1">
+                  <p>Erreur: {syncError}</p>
+                  {syncError === 'Failed to fetch' && (
+                    <p className="font-normal text-red-500">
+                      Connexion impossible. Vérifiez que votre projet Supabase est actif (non mis en pause) ou reconfigurez vos identifiants ci-dessous.
+                    </p>
+                  )}
                 </div>
-                {syncError && (
-                  <div className="text-xs text-red-600 font-semibold">Erreur: {syncError}</div>
-                )}
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={handlePullFromSupabase}
-                    className="w-full bg-slate-100 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all"
-                  >
-                    Charger depuis Supabase
-                  </button>
-                  <button
-                    onClick={handlePushToSupabase}
-                    className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
-                  >
-                    Envoyer vers Supabase
-                  </button>
-                  <button
-                    onClick={handleSupabaseSignOut}
-                    className="w-full bg-white text-slate-600 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all"
-                  >
-                    Deconnexion
-                  </button>
-                </div>
-              </>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSendMagicLink();
-                }}
-                className="space-y-4"
-              >
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-2">Email</label>
-                  <input
-                    type="email"
-                    value={syncEmail}
-                    onChange={(e) => setSyncEmail(e.target.value)}
-                    placeholder="prenom.nom@entreprise.com"
-                    className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
-                  />
-                </div>
-                {syncError && (
-                  <div className="text-xs text-red-600 font-semibold">Erreur: {syncError}</div>
-                )}
+              )}
+              <div className="flex flex-col gap-3">
                 <button
-                  type="submit"
-                  className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
-                  disabled={!syncEmail}
+                  onClick={handlePullFromSupabase}
+                  className="w-full bg-slate-100 text-slate-700 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all"
                 >
-                  Envoyer le lien magique
+                  Charger depuis Supabase
                 </button>
-                <p className="text-xs text-slate-500">
-                  Utilise le meme email sur un autre terminal pour recuperer l'etat sauvegarde.
-                </p>
-              </form>
-            )}
-            {isSyncing && (
-              <p className="text-xs text-slate-500">Synchronisation en cours...</p>
-            )}
-          </div>
-        )}
+                <button
+                  onClick={handlePushToSupabase}
+                  className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
+                >
+                  Envoyer vers Supabase
+                </button>
+                <button
+                  onClick={handleSupabaseSignOut}
+                  className="w-full bg-white text-slate-600 border border-slate-200 px-4 py-3 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all"
+                >
+                  Deconnexion
+                </button>
+              </div>
+              {syncError === 'Failed to fetch' && (
+                <SupabaseConfigPanel
+                  isOpen={isConfigPanelOpen}
+                  onToggle={() => setIsConfigPanelOpen(p => !p)}
+                  configUrl={configUrl}
+                  configKey={configKey}
+                  setConfigUrl={setConfigUrl}
+                  setConfigKey={setConfigKey}
+                  onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                  onClear={clearSupabaseConfig}
+                />
+              )}
+            </>
+          )}
+
+          {/* Logged-out / magic link form */}
+          {isSupabaseEnabled && !supabaseUser && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendMagicLink();
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-2">Email</label>
+                <input
+                  type="email"
+                  value={syncEmail}
+                  onChange={(e) => setSyncEmail(e.target.value)}
+                  placeholder="prenom.nom@entreprise.com"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                />
+              </div>
+              {syncError && (
+                <div className="text-xs text-red-600 font-semibold space-y-1">
+                  <p>Erreur: {syncError}</p>
+                  {syncError === 'Failed to fetch' && (
+                    <p className="font-normal text-red-500">
+                      Connexion impossible. Vérifiez que votre projet Supabase est actif (non mis en pause) ou reconfigurez vos identifiants ci-dessous.
+                    </p>
+                  )}
+                </div>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-teal-700 text-white px-4 py-3 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all"
+                disabled={!syncEmail}
+              >
+                Envoyer le lien magique
+              </button>
+              <p className="text-xs text-slate-500">
+                Utilise le meme email sur un autre terminal pour recuperer l'etat sauvegarde.
+              </p>
+              <SupabaseConfigPanel
+                isOpen={isConfigPanelOpen}
+                onToggle={() => setIsConfigPanelOpen(p => !p)}
+                configUrl={configUrl}
+                configKey={configKey}
+                setConfigUrl={setConfigUrl}
+                setConfigKey={setConfigKey}
+                onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                onClear={clearSupabaseConfig}
+              />
+            </form>
+          )}
+
+          {/* Supabase not configured at all */}
+          {!isSupabaseEnabled && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">Aucune configuration Supabase détectée. Entrez vos identifiants ci-dessous pour activer la synchronisation.</p>
+              <SupabaseConfigPanel
+                isOpen={true}
+                onToggle={() => {}}
+                configUrl={configUrl}
+                configKey={configKey}
+                setConfigUrl={setConfigUrl}
+                setConfigKey={setConfigKey}
+                onSave={() => saveSupabaseConfig(configUrl, configKey)}
+                onClear={clearSupabaseConfig}
+                forceOpen
+              />
+            </div>
+          )}
+
+          {isSyncing && (
+            <p className="text-xs text-slate-500">Synchronisation en cours...</p>
+          )}
+        </div>
       </Modal>
 
       {/* VUE ARCHIVE */}
