@@ -5,17 +5,18 @@ import { Loader2, Camera, Upload, AlertCircle, CheckCircle, Moon, Coffee } from 
 
 interface ExpenseFormProps {
   initialData?: Expense | null;
+  defaultCurrency?: string;
   onSubmit: (expenseData: Omit<Expense, 'id' | 'tripId'>) => void;
   onClose: () => void;
 }
 
-const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, onSubmit, onClose }) => {
+const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency = 'EUR', onSubmit, onClose }) => {
   const [formData, setFormData] = useState<Omit<Expense, 'id' | 'tripId'>>({
     date: new Date().toISOString().split('T')[0],
     category: ExpenseCategory.Meals,
     location: '',
     amount: 0,
-    currency: 'EUR',
+    currency: defaultCurrency,
     status: ExpenseStatus.Draft,
     receiptDataUrl: '',
     description: '',
@@ -118,7 +119,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, onSubmit, onClos
         const isPdf = files[i].type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
         const safeDataUrl = isPdf ? dataUrl : await compressImage(dataUrl);
         const aiData = await parseReceiptImage(safeDataUrl);
-        onSubmit(buildExpenseFromAi(aiData, safeDataUrl));
+        onSubmit(buildExpenseFromAi(aiData, safeDataUrl, defaultCurrency));
       } catch {
         errors++;
       }

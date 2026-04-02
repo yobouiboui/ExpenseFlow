@@ -2,14 +2,33 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AiParsedExpense, Expense, ExpenseCategory, TripMetadata } from "../types";
 
+const LS_KEY_GEMINI = 'expenseFlow_gemini_key';
+
+/** Persist a Gemini API key at runtime (overrides build-time env var). */
+export function saveGeminiKey(key: string): void {
+  if (key.trim()) localStorage.setItem(LS_KEY_GEMINI, key.trim());
+  else localStorage.removeItem(LS_KEY_GEMINI);
+}
+
+/** Return the currently stored runtime key (empty string if none). */
+export function getStoredGeminiKey(): string {
+  return localStorage.getItem(LS_KEY_GEMINI) || '';
+}
+
 // Initialize Gemini client lazily to avoid crashing the app when no API key is set.
+// Runtime localStorage key takes priority over build-time env vars.
 let aiClient: GoogleGenAI | null = null;
 const getAiClient = () => {
-  const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  const apiKey =
+    localStorage.getItem(LS_KEY_GEMINI) ||
+    process.env.API_KEY ||
+    process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY (set it in .env.local) to use AI features.");
+    throw new Error("Clé API Gemini manquante. Renseigne-la dans Paramètres → IA Gemini.");
   }
-  if (!aiClient) {
+  // Re-create client if localStorage key was updated since last call
+  const storedKey = localStorage.getItem(LS_KEY_GEMINI);
+  if (!aiClient || (storedKey && (aiClient as any)._apiKey !== storedKey)) {
     aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
