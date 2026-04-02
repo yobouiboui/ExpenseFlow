@@ -387,7 +387,7 @@ export default function App() {
     setSyncError(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: syncEmail,
-      options: { emailRedirectTo: window.location.origin }
+      options: { emailRedirectTo: 'https://expenseflowapp.netlify.app/' }
     });
     if (error) {
       setSyncError(error.message);
