@@ -6,7 +6,14 @@ import Modal from './components/Modal';
 import ExpenseForm from './components/ExpenseForm';
 import LoginScreen from './components/LoginScreen';
 import { Expense, TripMetadata, EmailDraft, ArchivedTrip } from './types';
-import { generateReimbursementEmail, saveGeminiKey, getStoredGeminiKey } from './services/geminiService';
+import {
+  generateReimbursementEmail,
+  saveGeminiKey, getStoredGeminiKey,
+  saveOpenAIKey, getStoredOpenAIKey,
+  saveProvider, getStoredProvider,
+  saveModel, getStoredModel,
+  DEFAULT_PROVIDER, DEFAULT_MODEL_GEMINI, DEFAULT_MODEL_OPENAI
+} from './services/geminiService';
 import { supabase, isSupabaseEnabled, saveSupabaseConfig, clearSupabaseConfig } from './services/supabaseClient';
 import type { User } from '@supabase/supabase-js';
 import JSZip from 'jszip';
@@ -170,6 +177,13 @@ export default function App() {
   // Clé API Gemini (runtime)
   const [geminiKeyInput, setGeminiKeyInput] = useState(() => getStoredGeminiKey());
   const [geminiKeySaved, setGeminiKeySaved] = useState(Boolean(getStoredGeminiKey()));
+
+  // Multi-provider AI settings
+  const [aiProvider, setAiProvider] = useState(() => getStoredProvider());
+  const [aiModel, setAiModel] = useState(() => getStoredModel());
+  const [openAIKeyInput, setOpenAIKeyInput] = useState(() => getStoredOpenAIKey());
+  const [openAIKeySaved, setOpenAIKeySaved] = useState(Boolean(getStoredOpenAIKey()));
+  const aiKeyActive = aiProvider === 'gemini' ? geminiKeySaved : openAIKeySaved;
 
   // État pour le panneau de configuration Supabase
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
@@ -1138,44 +1152,122 @@ export default function App() {
             </div>
           </div>
 
-          {/* ── IA GEMINI ── */}
+          {/* ── IA PROVIDER ── */}
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 bg-slate-50">
-              <span className="text-xs font-black uppercase text-slate-500 tracking-widest">IA Gemini</span>
-              <span className={`text-xs font-black px-2 py-0.5 rounded-full border ${geminiKeySaved ? 'text-teal-700 bg-teal-50 border-teal-200' : 'text-amber-600 bg-amber-50 border-amber-200'}`}>
-                {geminiKeySaved ? 'CLÉ ACTIVE' : 'AUCUNE CLÉ'}
+              <span className="text-xs font-black uppercase text-slate-500 tracking-widest">IA &amp; Modèle</span>
+              <span className={`text-xs font-black px-2 py-0.5 rounded-full border ${
+                aiKeyActive ? 'text-teal-700 bg-teal-50 border-teal-200' : 'text-amber-600 bg-amber-50 border-amber-200'
+              }`}>
+                {aiKeyActive ? 'CLÉ ACTIVE' : 'AUCUNE CLÉ'}
               </span>
             </div>
             <div className="p-4 space-y-3">
+
+              {/* Provider selector */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Clé API Gemini</label>
-                <input
-                  type="password"
-                  value={geminiKeyInput}
-                  onChange={(e) => setGeminiKeyInput(e.target.value)}
-                  placeholder="AIza..."
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
-                />
+                <label className="block text-xs font-bold text-slate-600 mb-1">Fournisseur IA</label>
+                <div className="flex gap-2">
+                  {(['gemini', 'openai'] as const).map(p => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => {
+                        saveProvider(p);
+                        setAiProvider(p);
+                        setAiModel(p === 'openai' ? DEFAULT_MODEL_OPENAI : DEFAULT_MODEL_GEMINI);
+                      }}
+                      className={`flex-1 py-2 rounded-xl text-xs font-black border transition-all ${
+                        aiProvider === p
+                          ? 'bg-teal-700 text-white border-teal-700'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {p === 'gemini' ? '✦ Google Gemini' : '◆ OpenAI'}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {/* Model field */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Modèle</label>
+                <input
+                  type="text"
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  onBlur={() => saveModel(aiModel)}
+                  placeholder={aiProvider === 'openai' ? DEFAULT_MODEL_OPENAI : DEFAULT_MODEL_GEMINI}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200 font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Défaut : <span className="font-semibold">{aiProvider === 'openai' ? DEFAULT_MODEL_OPENAI : DEFAULT_MODEL_GEMINI}</span>
+                </p>
+              </div>
+
+              {/* API Key */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  Clé API {aiProvider === 'openai' ? 'OpenAI' : 'Gemini'}
+                </label>
+                {aiProvider === 'gemini' ? (
+                  <input
+                    type="password"
+                    value={geminiKeyInput}
+                    onChange={(e) => setGeminiKeyInput(e.target.value)}
+                    placeholder="AIza..."
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                  />
+                ) : (
+                  <input
+                    type="password"
+                    value={openAIKeyInput}
+                    onChange={(e) => setOpenAIKeyInput(e.target.value)}
+                    placeholder="sk-..."
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                  />
+                )}
+              </div>
+
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => { saveGeminiKey(geminiKeyInput); setGeminiKeySaved(Boolean(geminiKeyInput.trim())); }}
-                  disabled={!geminiKeyInput.trim()}
+                  onClick={() => {
+                    if (aiProvider === 'gemini') {
+                      saveGeminiKey(geminiKeyInput);
+                      setGeminiKeySaved(Boolean(geminiKeyInput.trim()));
+                    } else {
+                      saveOpenAIKey(openAIKeyInput);
+                      setOpenAIKeySaved(Boolean(openAIKeyInput.trim()));
+                    }
+                    saveModel(aiModel);
+                  }}
+                  disabled={aiProvider === 'gemini' ? !geminiKeyInput.trim() : !openAIKeyInput.trim()}
                   className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-teal-800 transition-all disabled:opacity-40"
                 >
-                  Enregistrer la clé
+                  Enregistrer
                 </button>
                 <button
                   type="button"
-                  onClick={() => { saveGeminiKey(''); setGeminiKeyInput(''); setGeminiKeySaved(false); }}
+                  onClick={() => {
+                    if (aiProvider === 'gemini') {
+                      saveGeminiKey(''); setGeminiKeyInput(''); setGeminiKeySaved(false);
+                    } else {
+                      saveOpenAIKey(''); setOpenAIKeyInput(''); setOpenAIKeySaved(false);
+                    }
+                  }}
                   className="px-3 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
                 >
                   Effacer
                 </button>
               </div>
+
               <p className="text-xs text-slate-400">
-                La clé est stockée localement dans ce navigateur. Obtiens-la sur <span className="font-semibold">aistudio.google.com</span>.
+                {aiProvider === 'gemini'
+                  ? <>Clé disponible sur <span className="font-semibold">aistudio.google.com</span>.</>  
+                  : <>Clé disponible sur <span className="font-semibold">platform.openai.com</span>.</>
+                }
+                {' '}Stockée localement dans ce navigateur uniquement.
               </p>
             </div>
           </div>
