@@ -148,8 +148,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
       try {
         const dataUrl = await readFileAsDataUrl(files[i]);
         const isPdf = files[i].type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
-        const safeDataUrl = isPdf ? dataUrl : await compressImage(dataUrl);
-        const aiInputDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : safeDataUrl;
+        const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : '';
+        const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(dataUrl);
+        const aiInputDataUrl = safeDataUrl;
         const aiData = await parseReceiptImage(aiInputDataUrl);
         onSubmit(buildExpenseFromAi(aiData, safeDataUrl, defaultCurrency));
       } catch (err) {
@@ -171,8 +172,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
     const isPdf = file.type === 'application/pdf' || base64Data.startsWith('data:application/pdf');
 
     const processAsync = async () => {
-      const safeDataUrl = isPdf ? base64Data : await compressImage(base64Data);
-      const aiInputDataUrl = isPdf ? await renderPdfFirstPage(base64Data) : safeDataUrl;
+      const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(base64Data) : '';
+      const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(base64Data);
+      const aiInputDataUrl = safeDataUrl;
       setFormData(prev => ({ ...prev, receiptDataUrl: safeDataUrl }));
       try {
         const aiData = await parseReceiptImage(aiInputDataUrl);

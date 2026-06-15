@@ -44,7 +44,7 @@ import {
   saveOpenAIKey,
   saveProvider,
 } from './services/geminiService';
-import { ArchivedTrip, EmailDraft, Expense, TripMetadata } from './types';
+import { ArchivedTrip, EmailDraft, Expense, ExpenseCategory, ExpenseStatus, TripMetadata } from './types';
 
 const STORAGE_KEY_EXPENSES = 'expenseFlow_expenses_prod_v1';
 const STORAGE_KEY_ARCHIVE = 'expenseFlow_archive_prod_v1';
@@ -56,6 +56,80 @@ const STORAGE_KEY_CURRENCY = 'expenseFlow_currency_v1';
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const safeArray = <T,>(value: T[] | null | undefined): T[] => (Array.isArray(value) ? value : []);
+
+const safeJsonParse = <T,>(value: string | null, fallback: T): T => {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const toSafeString = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
+
+const toSafeAmount = (value: unknown) => {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toSafeDate = (value: unknown) => {
+  const raw = toSafeString(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (raw.includes('T') && !Number.isNaN(new Date(raw).getTime())) return raw.split('T')[0];
+  return new Date().toISOString().split('T')[0];
+};
+
+const toSafeCategory = (value: unknown): ExpenseCategory => {
+  return Object.values(ExpenseCategory).includes(value as ExpenseCategory)
+    ? (value as ExpenseCategory)
+    : ExpenseCategory.Misc;
+};
+
+const normalizeExpense = (expense: Partial<Expense>): Expense => ({
+  id: toSafeString(expense.id, generateId()),
+  tripId: toSafeString(expense.tripId),
+  date: toSafeDate(expense.date),
+  category: toSafeCategory(expense.category),
+  location: toSafeString(expense.location, 'Non specifie'),
+  amount: toSafeAmount(expense.amount),
+  currency: toSafeString(expense.currency, 'EUR').toUpperCase(),
+  status: Object.values(ExpenseStatus).includes(expense.status as ExpenseStatus) ? (expense.status as ExpenseStatus) : ExpenseStatus.Draft,
+  receiptDataUrl: toSafeString(expense.receiptDataUrl),
+  description: toSafeString(expense.description),
+  hotelNights: Math.max(0, Math.trunc(toSafeAmount(expense.hotelNights))),
+  hotelBreakfasts: Math.max(0, Math.trunc(toSafeAmount(expense.hotelBreakfasts))),
+});
+
+const normalizeExpenses = (value: unknown): Expense[] =>
+  Array.isArray(value) ? value.map((expense) => normalizeExpense(expense as Partial<Expense>)) : [];
+
+const stripReceiptPayloads = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stripReceiptPayloads);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        key === 'receiptDataUrl' ? '' : stripReceiptPayloads(entry),
+      ])
+    );
+  }
+  return value;
+};
+
+const persistJson = (key: string, value: unknown) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    try {
+      localStorage.setItem(key, JSON.stringify(stripReceiptPayloads(value)));
+      return;
+    } catch {
+      // Keep the app running even if the browser storage quota is exhausted.
+    }
+    console.warn(`Unable to persist ${key}`, error);
+  }
+};
 
 const createNewTrip = (name: string = 'Nouveau Voyage'): TripMetadata => ({
   id: generateId(),
@@ -79,9 +153,10 @@ const isTripEmpty = (trip: TripMetadata) => {
 
 const formatShortDate = (dateStr: string | null) => {
   if (!dateStr) return '';
-  const value = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  const safeDateStr = String(dateStr);
+  const value = safeDateStr.includes('T') ? safeDateStr.split('T')[0] : safeDateStr;
   const [year, month, day] = value.split('-');
-  return year && month && day ? `${day}.${month}.${year.slice(2)}` : dateStr;
+  return year && month && day ? `${day}.${month}.${year.slice(2)}` : safeDateStr;
 };
 
 const formatDateTime = (dateStr: string | null) => {
@@ -106,7 +181,7 @@ const formatDayLabel = (dateStr: string) => {
 };
 
 const formatAmount = (amount: number) =>
-  amount.toLocaleString('fr-FR', {
+  toSafeAmount(amount).toLocaleString('fr-FR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -214,16 +289,14 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => sessionStorage.getItem(SESSION_KEY_AUTH) === 'true');
   const [activeTab, setActiveTab] = useState<'expenses' | 'reports'>('expenses');
   const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_EXPENSES);
-    return saved ? JSON.parse(saved) : [];
+    return normalizeExpenses(safeJsonParse<unknown>(localStorage.getItem(STORAGE_KEY_EXPENSES), []));
   });
   const [archivedTrips, setArchivedTrips] = useState<ArchivedTrip[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_ARCHIVE);
-    return saved ? JSON.parse(saved) : [];
+    const saved = safeJsonParse<ArchivedTrip[]>(localStorage.getItem(STORAGE_KEY_ARCHIVE), []);
+    return safeArray(saved).map((archive) => ({ ...archive, expenses: normalizeExpenses(archive.expenses) }));
   });
   const [trip, setTrip] = useState<TripMetadata>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_TRIP);
-    return saved ? JSON.parse(saved) : createNewTrip('Voyage Professionnel');
+    return safeJsonParse<TripMetadata>(localStorage.getItem(STORAGE_KEY_TRIP), createNewTrip('Voyage Professionnel'));
   });
   const [notification, setNotification] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -258,9 +331,9 @@ export default function App() {
   const returnInputRef = useRef<HTMLInputElement>(null);
   const syncTimerRef = useRef<number | null>(null);
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEY_EXPENSES, JSON.stringify(expenses)); }, [expenses]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEY_ARCHIVE, JSON.stringify(archivedTrips)); }, [archivedTrips]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEY_TRIP, JSON.stringify(trip)); }, [trip]);
+  useEffect(() => { persistJson(STORAGE_KEY_EXPENSES, expenses); }, [expenses]);
+  useEffect(() => { persistJson(STORAGE_KEY_ARCHIVE, archivedTrips); }, [archivedTrips]);
+  useEffect(() => { persistJson(STORAGE_KEY_TRIP, trip); }, [trip]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
 
   const localStateEmpty = expenses.length === 0 && archivedTrips.length === 0 && isTripEmpty(trip);
@@ -329,11 +402,13 @@ export default function App() {
       }
 
       const localArchiveIds = new Set(archivedTrips.map((archive) => archive.id));
-      const newRemoteArchives = safeArray(data.archived_trips).filter((archive) => !localArchiveIds.has(archive.id));
+      const newRemoteArchives = safeArray(data.archived_trips)
+        .filter((archive) => !localArchiveIds.has(archive.id))
+        .map((archive) => ({ ...archive, expenses: normalizeExpenses(archive.expenses) }));
       if (newRemoteArchives.length > 0) setArchivedTrips((prev) => [...prev, ...newRemoteArchives]);
 
       if (localStateEmpty) {
-        setExpenses(safeArray(data.expenses));
+        setExpenses(normalizeExpenses(data.expenses));
         setTrip((data.trip as TripMetadata) || createNewTrip());
       }
 
@@ -417,11 +492,12 @@ export default function App() {
     });
   }, [expenses, trip.departureDate, trip.destinationCountry, trip.returnDate]);
 
-  const totalAmount = useMemo(() => expenses.reduce((sum, expense) => sum + expense.amount, 0), [expenses]);
+  const totalAmount = useMemo(() => expenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0), [expenses]);
 
   const categoryTotals = useMemo(() => {
     const totals = expenses.reduce<Record<string, number>>((acc, expense) => {
-      acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
+      const category = toSafeCategory(expense.category);
+      acc[category] = (acc[category] || 0) + toSafeAmount(expense.amount);
       return acc;
     }, {});
     return Object.entries(totals).sort((a, b) => b[1] - a[1]);
@@ -429,8 +505,9 @@ export default function App() {
 
   const groupedExpenses = useMemo(() => {
     const groups = expenses.reduce<Record<string, Expense[]>>((acc, expense) => {
-      if (!acc[expense.date]) acc[expense.date] = [];
-      acc[expense.date].push(expense);
+      const date = toSafeDate(expense.date);
+      if (!acc[date]) acc[date] = [];
+      acc[date].push({ ...expense, date });
       return acc;
     }, {});
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
@@ -503,8 +580,8 @@ export default function App() {
     }
 
     if (data) {
-      setExpenses(safeArray(data.expenses));
-      setArchivedTrips(safeArray(data.archived_trips));
+      setExpenses(normalizeExpenses(data.expenses));
+      setArchivedTrips(safeArray(data.archived_trips).map((archive) => ({ ...archive, expenses: normalizeExpenses(archive.expenses) })));
       setTrip((data.trip as TripMetadata) || createNewTrip());
       const remoteSyncTime = data.updated_at ? new Date(data.updated_at).toISOString() : new Date().toISOString();
       setLastSyncAt(remoteSyncTime);
@@ -549,14 +626,14 @@ export default function App() {
   };
 
   const handleAddExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
-    const newExpense = { ...data, id: generateId(), tripId: trip.id } as Expense;
+    const newExpense = normalizeExpense({ ...data, id: generateId(), tripId: trip.id });
     setExpenses((prev) => [...prev, newExpense]);
     showNotification('Depense ajoutee.');
   };
 
   const handleEditExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
     if (!editingExpense) return;
-    setExpenses((prev) => prev.map((expense) => (expense.id === editingExpense.id ? { ...expense, ...data } : expense)));
+    setExpenses((prev) => prev.map((expense) => (expense.id === editingExpense.id ? normalizeExpense({ ...expense, ...data }) : expense)));
     setEditingExpense(null);
     showNotification('Depense mise a jour.');
   };
@@ -587,7 +664,7 @@ export default function App() {
     if (expenses.length === 0) return;
     const expenseLines = expenses
       .map((expense, index) => {
-        const base = `${index + 1}. ${formatShortDate(expense.date)} | ${expense.category} | ${expense.location} | ${expense.amount} ${expense.currency}`;
+        const base = `${index + 1}. ${formatShortDate(expense.date)} | ${expense.category} | ${expense.location} | ${formatAmount(expense.amount)} ${expense.currency}`;
         return expense.category === 'Hotel'
           ? `${base} | Nuits: ${expense.hotelNights || 0} | PDJ: ${expense.hotelBreakfasts || 0}`
           : base;
@@ -883,7 +960,7 @@ export default function App() {
                   </div>
                   <div className="text-left md:text-right">
                     <div className="font-mono-ui mb-2 text-[10px] uppercase tracking-[0.2em] text-[#7f766a]">Sous-total</div>
-                    <div className="font-display text-4xl leading-none tracking-tight">{formatAmount(items.reduce((sum, expense) => sum + expense.amount, 0))}</div>
+                    <div className="font-display text-4xl leading-none tracking-tight">{formatAmount(items.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0))}</div>
                     <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#8b8175]">{tripCurrency}</div>
                   </div>
                 </div>
@@ -911,7 +988,7 @@ export default function App() {
                   <div className="font-display text-4xl italic">{archiveSearchTerm ? 'Aucun resultat' : 'Aucune archive'}</div>
                 </div>
               ) : filteredAndSortedArchives.map((archive) => {
-                const archiveTotal = archive.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+                const archiveTotal = archive.expenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0);
                 return (
                   <div key={archive.id} className="grid gap-5 border border-[#e5e0d8] bg-[#fbf7f0] p-6 md:grid-cols-[1fr_auto_auto] md:items-center">
                     <button type="button" onClick={() => setSelectedArchive(archive)} className="text-left">
@@ -1174,7 +1251,7 @@ export default function App() {
               <ExpenseTable expenses={selectedArchive.expenses} isReadonly onEdit={() => {}} onDelete={() => {}} onViewReceipt={setPreviewImage} />
             </div>
             <div className="flex flex-col gap-4 border-t border-[#d8d0c3] p-8 md:flex-row md:items-center md:justify-between">
-              <div className="font-display text-5xl tracking-tight">Total : {formatAmount(selectedArchive.expenses.reduce((sum, expense) => sum + expense.amount, 0))} {selectedArchive.expenses[0]?.currency || tripCurrency}</div>
+              <div className="font-display text-5xl tracking-tight">Total : {formatAmount(selectedArchive.expenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0))} {selectedArchive.expenses[0]?.currency || tripCurrency}</div>
               <div className="flex flex-col gap-3 md:flex-row">
                 <button onClick={() => handleDownloadZip(selectedArchive.expenses)} className="border border-[#0a0a0a] px-4 py-3 text-[10px] uppercase tracking-[0.15em]">Telecharger ZIP</button>
                 <button onClick={() => handleGenerateEmail(selectedArchive.trip, selectedArchive.expenses)} className="border border-[#1f4f99] bg-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#f7f3ea]">Regenerer rapport</button>

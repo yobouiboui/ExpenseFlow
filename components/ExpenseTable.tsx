@@ -79,7 +79,7 @@ const ExpenseTable: React.FC<ExpenseTableProps> = ({ expenses, onEdit, onDelete,
                   )}
                 </td>
                 <td className="px-8 py-6">
-                  <span className="text-xl font-black text-slate-900">{expense.amount.toFixed(2)}</span>
+                  <span className="text-xl font-black text-slate-900">{(Number.isFinite(Number(expense.amount)) ? Number(expense.amount) : 0).toFixed(2)}</span>
                   <span className="ml-1.5 text-[10px] font-black text-slate-300 uppercase">{expense.currency}</span>
                 </td>
                 <td className="px-8 py-6 text-center">
