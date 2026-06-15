@@ -36,6 +36,37 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  const renderPdfFirstPage = async (dataUrl: string): Promise<string> => {
+    const pdfjs = await import('pdfjs-dist');
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+
+    const base64 = dataUrl.split(',')[1];
+    if (!base64) {
+      throw new Error('PDF invalide: contenu base64 introuvable.');
+    }
+
+    const binary = atob(base64);
+    const pdfBytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const pdf = await pdfjs.getDocument({ data: pdfBytes }).promise;
+    const page = await pdf.getPage(1);
+    const initialViewport = page.getViewport({ scale: 1 });
+    const targetMaxSide = 1800;
+    const scale = Math.min(2, targetMaxSide / Math.max(initialViewport.width, initialViewport.height));
+    const viewport = page.getViewport({ scale: Math.max(scale, 1) });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      throw new Error('Impossible de preparer le rendu du PDF.');
+    }
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas.toDataURL('image/jpeg', 0.9);
+  };
+
   const compressImage = (dataUrl: string, maxSize = 1600, quality = 0.82): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -118,7 +149,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
         const dataUrl = await readFileAsDataUrl(files[i]);
         const isPdf = files[i].type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
         const safeDataUrl = isPdf ? dataUrl : await compressImage(dataUrl);
-        const aiData = await parseReceiptImage(safeDataUrl);
+        const aiInputDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : safeDataUrl;
+        const aiData = await parseReceiptImage(aiInputDataUrl);
         onSubmit(buildExpenseFromAi(aiData, safeDataUrl, defaultCurrency));
       } catch (err) {
         errors++;
@@ -140,9 +172,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
 
     const processAsync = async () => {
       const safeDataUrl = isPdf ? base64Data : await compressImage(base64Data);
+      const aiInputDataUrl = isPdf ? await renderPdfFirstPage(base64Data) : safeDataUrl;
       setFormData(prev => ({ ...prev, receiptDataUrl: safeDataUrl }));
       try {
-        const aiData = await parseReceiptImage(safeDataUrl);
+        const aiData = await parseReceiptImage(aiInputDataUrl);
         setFormData(prev => {
           const allowedCurrencies = ['EUR', 'USD'];
           const aiCurrency = aiData.currency?.toUpperCase?.() || '';
