@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle,
   Clock,
+  Eye,
   FileText,
   Globe,
   LogOut,
@@ -960,9 +961,18 @@ export default function App() {
                           </div>
                         </div>
                         <div className="flex items-center justify-end gap-3">
-                          <button type="button" onClick={() => expense.receiptDataUrl && setPreviewImage(expense.receiptDataUrl)} className={`h-2.5 w-2.5 rounded-full ${expense.receiptDataUrl ? 'bg-[#1f4f99]' : 'border border-[#9cb6dc]'}`} title={expense.receiptDataUrl ? 'Justificatif disponible' : 'Sans justificatif'} />
                           <div className="font-display text-3xl leading-none tracking-tight">{formatAmount(expense.amount)}</div>
                           <div className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-[#8b8175]">{expense.currency}</div>
+                          <button
+                            type="button"
+                            onClick={() => expense.receiptDataUrl && setPreviewImage(expense.receiptDataUrl)}
+                            disabled={!expense.receiptDataUrl}
+                            className="flex items-center gap-1 border border-[#1f4f99] px-2.5 py-2 text-[10px] uppercase tracking-[0.12em] text-[#1f4f99] disabled:border-[#d8d0c3] disabled:text-[#b8afa3]"
+                            title={expense.receiptDataUrl ? 'Visualiser la facture analysee' : 'Aucune facture disponible'}
+                          >
+                            <Eye size={14} />
+                            Voir
+                          </button>
                           <button type="button" onClick={() => { setEditingExpense(expense); setIsFormOpen(true); }} className="p-2 text-[#0a0a0a]" title="Modifier"><FileText size={16} /></button>
                           <button type="button" onClick={() => handleDeleteExpense(expense.id)} className="p-2 text-[#b26355]" title="Supprimer"><Trash2 size={16} /></button>
                         </div>
