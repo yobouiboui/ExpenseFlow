@@ -15,6 +15,7 @@ execFileSync(
   [
     resolve(root, 'node_modules/typescript/bin/tsc'),
     'components/receiptPreparation.ts',
+    'components/receiptAiParsing.ts',
     '--target',
     'ES2022',
     '--module',
@@ -29,6 +30,7 @@ execFileSync(
 );
 
 const { prepareReceiptDataUrls } = await import(pathToFileURL(resolve(outDir, 'receiptPreparation.js')).href);
+const { parseReceiptWithFallback } = await import(pathToFileURL(resolve(outDir, 'receiptAiParsing.js')).href);
 
 const originalPdf = 'data:application/pdf;base64,JVBERi0xLjQKcGRm';
 const renderedAllPages = 'data:image/jpeg;base64,all-pages';
@@ -41,7 +43,8 @@ const pdfResult = await prepareReceiptDataUrls({
 });
 
 assert.equal(pdfResult.safeDataUrl, originalPdf);
-assert.equal(pdfResult.aiInputDataUrl, renderedAllPages);
+assert.equal(pdfResult.aiInputDataUrl, originalPdf);
+assert.equal(pdfResult.fallbackAiInputDataUrl, renderedAllPages);
 
 const originalImage = 'data:image/png;base64,iVBORw0KGgo=';
 const imageResult = await prepareReceiptDataUrls({
@@ -55,5 +58,24 @@ const imageResult = await prepareReceiptDataUrls({
 
 assert.equal(imageResult.safeDataUrl, `compressed:${originalImage}`);
 assert.equal(imageResult.aiInputDataUrl, `compressed:${originalImage}`);
+assert.equal(imageResult.fallbackAiInputDataUrl, undefined);
+
+const parsedViaFallback = await parseReceiptWithFallback({
+  primaryDataUrl: 'data:application/pdf;base64,pdf',
+  fallbackDataUrl: 'data:image/jpeg;base64,fallback',
+  parse: async (dataUrl) => (
+    dataUrl.includes('fallback')
+      ? { amount: 12.5, date: '2026-06-10', location: 'Hamburg', category: 'Transport' }
+      : { amount: 0, location: 'Hamburg' }
+  ),
+  isValid: (candidate) => Number(candidate.amount) > 0 && Boolean(candidate.date),
+});
+
+assert.deepEqual(parsedViaFallback, {
+  amount: 12.5,
+  date: '2026-06-10',
+  location: 'Hamburg',
+  category: 'Transport',
+});
 
 rmSync(outDir, { recursive: true, force: true });

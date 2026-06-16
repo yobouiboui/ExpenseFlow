@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AiParsedExpense, Expense, ExpenseCategory, ExpenseStatus } from '../types';
 import { parseReceiptImage } from '../services/geminiService';
+import { parseReceiptWithFallback } from './receiptAiParsing';
 import { prepareReceiptDataUrls } from './receiptPreparation';
 import { Loader2, Camera, Upload, AlertCircle, CheckCircle, Moon, Coffee } from 'lucide-react';
 
@@ -151,6 +152,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
     });
   };
 
+  const parsePreparedReceipt = async (preparedReceipt: Awaited<ReturnType<typeof prepareFileForAnalysis>>) =>
+    parseReceiptWithFallback({
+      primaryDataUrl: preparedReceipt.aiInputDataUrl,
+      fallbackDataUrl: preparedReceipt.fallbackAiInputDataUrl,
+      parse: parseReceiptImage,
+      isValid: isValidReceiptResult,
+    });
+
   const isValidReceiptResult = (aiData: AiParsedExpense) => {
     const allowedCategories = Object.values(ExpenseCategory);
     const amount = Number(aiData.amount);
@@ -183,14 +192,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
   };
 
   const parseAndValidateReceipt = async (file: File, dataUrl: string) => {
-    const { safeDataUrl, aiInputDataUrl } = await prepareFileForAnalysis(file, dataUrl);
-    const aiData = await parseReceiptImage(aiInputDataUrl);
+    const preparedReceipt = await prepareFileForAnalysis(file, dataUrl);
+    const aiData = await parsePreparedReceipt(preparedReceipt);
 
     if (!isValidReceiptResult(aiData)) {
-      throw new ReceiptValidationError('Ce fichier ne ressemble pas a une facture exploitable.', safeDataUrl, aiData);
+      throw new ReceiptValidationError('Ce fichier ne ressemble pas a une facture exploitable.', preparedReceipt.safeDataUrl, aiData);
     }
 
-    return { aiData, safeDataUrl };
+    return { aiData, safeDataUrl: preparedReceipt.safeDataUrl };
   };
 
   useEffect(() => {
@@ -278,10 +287,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
   /** Single-file: populate form fields for manual review before submit. */
   const handleSingleFile = (file: File, base64Data: string) => {
     const processAsync = async () => {
-      const { safeDataUrl, aiInputDataUrl } = await prepareFileForAnalysis(file, base64Data);
+      const preparedReceipt = await prepareFileForAnalysis(file, base64Data);
+      const { safeDataUrl } = preparedReceipt;
       setFormData(prev => ({ ...prev, receiptDataUrl: safeDataUrl }));
       try {
-        const aiData = await parseReceiptImage(aiInputDataUrl);
+        const aiData = await parsePreparedReceipt(preparedReceipt);
         if (!isValidReceiptResult(aiData)) {
           applyAiDataToManualForm(aiData, safeDataUrl);
           setError('Ce fichier ne ressemble pas a une facture exploitable. Complete la ligne manuellement.');

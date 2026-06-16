@@ -17,7 +17,8 @@ export const prepareReceiptDataUrls = async ({
   if (isPdfDataUrl(fileType, dataUrl)) {
     return {
       safeDataUrl: dataUrl,
-      aiInputDataUrl: await renderPdfForAnalysis(dataUrl),
+      aiInputDataUrl: dataUrl,
+      fallbackAiInputDataUrl: await renderPdfForAnalysis(dataUrl),
     };
   }
 

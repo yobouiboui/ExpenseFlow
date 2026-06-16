@@ -117,7 +117,10 @@ If it is an expense proof, return a JSON object with fields:
     }
 
     // ── Gemini ───────────────────────────────────────────────────────────────
-    const prompt = `Analyze this receipt. ${schemaDescription}
+    const prompt = `Analyze this receipt or invoice. Inspect every visible page when the document is a PDF or multi-page document.
+Extract the final payable/paid total including taxes. Do not use subtotals, tax-only values, individual line items, card authorization numbers, booking references, or descriptive itinerary text as the amount.
+Prefer the invoice/receipt issue date or service date printed on the expense proof, not today's date and not the file name date unless the document itself confirms it.
+${schemaDescription}
 If category is Hotel: hotelNights = nights stayed (default 1), hotelBreakfasts = breakfasts charged (default 0).`;
     const response = await getGeminiClient().models.generateContent({
       model,
