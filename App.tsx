@@ -92,6 +92,30 @@ const toSafeDate = (value: unknown) => {
   return new Date().toISOString().split('T')[0];
 };
 
+const getDateParts = (value: unknown) => {
+  const [year, month, day] = toSafeDate(value).split('-').map((part) => Number.parseInt(part, 10));
+  return { year, month, day };
+};
+
+const getReferenceYear = (expenseList: Expense[], trip?: TripMetadata) => {
+  const tripYear = trip?.departureDate ? getDateParts(trip.departureDate).year : null;
+  if (tripYear && Number.isFinite(tripYear)) return tripYear;
+
+  const yearCounts = expenseList.reduce<Record<number, number>>((acc, expense) => {
+    const { year } = getDateParts(expense.date);
+    if (Number.isFinite(year)) acc[year] = (acc[year] || 0) + 1;
+    return acc;
+  }, {});
+  const [mostCommonYear] = Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0] || [];
+  return mostCommonYear ? Number.parseInt(mostCommonYear, 10) : new Date().getFullYear();
+};
+
+const toTimelineDate = (value: unknown, referenceYear: number) => {
+  const { month, day } = getDateParts(value);
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return toSafeDate(value);
+  return `${referenceYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
 const toSafeCategory = (value: unknown): ExpenseCategory => {
   return Object.values(ExpenseCategory).includes(value as ExpenseCategory)
     ? (value as ExpenseCategory)
@@ -119,6 +143,15 @@ const normalizeExpenses = (value: unknown): Expense[] =>
 const sortExpensesChronologically = (expenseList: Expense[]) =>
   [...expenseList].sort((a, b) => {
     const dateCompare = toSafeDate(a.date).localeCompare(toSafeDate(b.date));
+    if (dateCompare !== 0) return dateCompare;
+    const locationCompare = toSafeString(a.location).localeCompare(toSafeString(b.location), 'fr-FR');
+    if (locationCompare !== 0) return locationCompare;
+    return toSafeString(a.id).localeCompare(toSafeString(b.id));
+  });
+
+const sortExpensesByTimeline = (expenseList: Expense[], referenceYear: number) =>
+  [...expenseList].sort((a, b) => {
+    const dateCompare = toTimelineDate(a.date, referenceYear).localeCompare(toTimelineDate(b.date, referenceYear));
     if (dateCompare !== 0) return dateCompare;
     const locationCompare = toSafeString(a.location).localeCompare(toSafeString(b.location), 'fr-FR');
     if (locationCompare !== 0) return locationCompare;
@@ -201,15 +234,16 @@ const formatDayLabel = (dateStr: string) => {
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 };
 
-const getDayNumber = (dateStr: string) => {
-  const date = new Date(`${toSafeDate(dateStr)}T12:00:00`);
+const getDayNumber = (dateStr: string, referenceYear?: number) => {
+  const safeDate = referenceYear ? toTimelineDate(dateStr, referenceYear) : toSafeDate(dateStr);
+  const date = new Date(`${safeDate}T12:00:00`);
   return Number.isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 86400000);
 };
 
-const formatTimelineOffset = (dateStr: string, baseDateStr: string | null) => {
+const formatTimelineOffset = (dateStr: string, baseDateStr: string | null, referenceYear: number) => {
   if (!baseDateStr) return 'J+0';
-  const currentDay = getDayNumber(dateStr);
-  const baseDay = getDayNumber(baseDateStr);
+  const currentDay = getDayNumber(dateStr, referenceYear);
+  const baseDay = getDayNumber(baseDateStr, referenceYear);
   if (currentDay === null || baseDay === null) return 'J+0';
   const diff = currentDay - baseDay;
   return diff >= 0 ? `J+${diff}` : `J${diff}`;
@@ -372,6 +406,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
 
   const sortedExpenses = useMemo(() => sortExpensesChronologically(expenses), [expenses]);
+  const timelineReferenceYear = useMemo(() => getReferenceYear(sortedExpenses, trip), [sortedExpenses, trip.departureDate]);
+  const timelineExpenses = useMemo(() => sortExpensesByTimeline(sortedExpenses, timelineReferenceYear), [sortedExpenses, timelineReferenceYear]);
 
   const localStateEmpty = expenses.length === 0 && archivedTrips.length === 0 && isTripEmpty(trip);
   const syncEnabled = isSupabaseEnabled && !!supabaseUser;
@@ -494,7 +530,7 @@ export default function App() {
   useEffect(() => {
     if (sortedExpenses.length === 0) return;
 
-    const sortedDates = sortedExpenses.map((expense) => expense.date).filter(Boolean).sort();
+    const sortedDates = timelineExpenses.map((expense) => toTimelineDate(expense.date, timelineReferenceYear)).filter(Boolean).sort();
     let suggestedDeparture = trip.departureDate;
     let suggestedReturn = trip.returnDate;
 
@@ -505,7 +541,7 @@ export default function App() {
 
     let inferredDestination = trip.destinationCountry;
     if (!trip.destinationCountry) {
-      const lastExpense = sortedExpenses[sortedExpenses.length - 1];
+      const lastExpense = timelineExpenses[timelineExpenses.length - 1];
       if (lastExpense?.location) {
         const parts = lastExpense.location.split(',');
         inferredDestination = parts.length > 1 ? parts[parts.length - 1].trim() : lastExpense.location;
@@ -527,7 +563,7 @@ export default function App() {
         destinationCountry: inferredDestination || prev.destinationCountry,
       };
     });
-  }, [sortedExpenses, trip.departureDate, trip.destinationCountry, trip.returnDate]);
+  }, [timelineExpenses, timelineReferenceYear, trip.departureDate, trip.destinationCountry, trip.returnDate]);
 
   const totalAmount = useMemo(() => sortedExpenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0), [sortedExpenses]);
 
@@ -541,14 +577,14 @@ export default function App() {
   }, [sortedExpenses]);
 
   const groupedExpenses = useMemo(() => {
-    const groups = sortedExpenses.reduce<Record<string, Expense[]>>((acc, expense) => {
-      const date = toSafeDate(expense.date);
+    const groups = timelineExpenses.reduce<Record<string, Expense[]>>((acc, expense) => {
+      const date = toTimelineDate(expense.date, timelineReferenceYear);
       if (!acc[date]) acc[date] = [];
       acc[date].push({ ...expense, date });
       return acc;
     }, {});
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [sortedExpenses]);
+  }, [timelineExpenses, timelineReferenceYear]);
   const timelineStartDate = groupedExpenses[0]?.[0] || null;
 
   const filteredAndSortedArchives = useMemo(() => {
@@ -972,7 +1008,7 @@ export default function App() {
                 <div key={date} className="grid gap-6 border-b border-[#e5e0d8] py-7 md:grid-cols-[160px_1fr_170px] md:gap-8">
                   <div>
                     <div className="font-display text-5xl leading-none">{new Date(`${date}T12:00:00`).getDate()}</div>
-                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#7f766a]">{formatDayLabel(date)} · {formatTimelineOffset(date, timelineStartDate)}</div>
+                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#7f766a]">{formatDayLabel(date)} · {formatTimelineOffset(date, timelineStartDate, timelineReferenceYear)}</div>
                   </div>
                   <div>
                     {items.map((expense, itemIndex) => (
