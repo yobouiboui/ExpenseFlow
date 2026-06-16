@@ -98,16 +98,18 @@ const getDateParts = (value: unknown) => {
 };
 
 const getReferenceYear = (expenseList: Expense[], trip?: TripMetadata) => {
-  const tripYear = trip?.departureDate ? getDateParts(trip.departureDate).year : null;
-  if (tripYear && Number.isFinite(tripYear)) return tripYear;
-
   const yearCounts = expenseList.reduce<Record<number, number>>((acc, expense) => {
     const { year } = getDateParts(expense.date);
     if (Number.isFinite(year)) acc[year] = (acc[year] || 0) + 1;
     return acc;
   }, {});
   const [mostCommonYear] = Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0] || [];
-  return mostCommonYear ? Number.parseInt(mostCommonYear, 10) : new Date().getFullYear();
+  if (mostCommonYear) return Number.parseInt(mostCommonYear, 10);
+
+  const tripYear = trip?.departureDate ? getDateParts(trip.departureDate).year : null;
+  if (tripYear && Number.isFinite(tripYear)) return tripYear;
+
+  return new Date().getFullYear();
 };
 
 const toTimelineDate = (value: unknown, referenceYear: number) => {
