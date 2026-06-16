@@ -75,9 +75,20 @@ const toSafeAmount = (value: unknown) => {
 };
 
 const toSafeDate = (value: unknown) => {
-  const raw = toSafeString(value);
+  const raw = toSafeString(value).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   if (raw.includes('T') && !Number.isNaN(new Date(raw).getTime())) return raw.split('T')[0];
+
+  const europeanDate = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (europeanDate) {
+    const [, day, month, year] = europeanDate;
+    const fullYear = year.length === 2 ? `20${year}` : year;
+    return `${fullYear.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
+
   return new Date().toISOString().split('T')[0];
 };
 
@@ -188,6 +199,20 @@ const formatDayLabel = (dateStr: string) => {
   const date = new Date(`${dateStr}T12:00:00`);
   if (Number.isNaN(date.getTime())) return dateStr;
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+};
+
+const getDayNumber = (dateStr: string) => {
+  const date = new Date(`${toSafeDate(dateStr)}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : Math.floor(date.getTime() / 86400000);
+};
+
+const formatTimelineOffset = (dateStr: string, baseDateStr: string | null) => {
+  if (!baseDateStr) return 'J+0';
+  const currentDay = getDayNumber(dateStr);
+  const baseDay = getDayNumber(baseDateStr);
+  if (currentDay === null || baseDay === null) return 'J+0';
+  const diff = currentDay - baseDay;
+  return diff >= 0 ? `J+${diff}` : `J${diff}`;
 };
 
 const formatAmount = (amount: number) =>
@@ -524,6 +549,7 @@ export default function App() {
     }, {});
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
   }, [sortedExpenses]);
+  const timelineStartDate = groupedExpenses[0]?.[0] || null;
 
   const filteredAndSortedArchives = useMemo(() => {
     return archivedTrips
@@ -942,11 +968,11 @@ export default function App() {
                   <div className="font-display text-4xl italic text-[#8b8175]">Aucune depense enregistree</div>
                   <p className="mt-3 text-sm text-[#8b8175]">Ajoute une ligne pour commencer le dossier.</p>
                 </div>
-              ) : groupedExpenses.map(([date, items], index) => (
+              ) : groupedExpenses.map(([date, items]) => (
                 <div key={date} className="grid gap-6 border-b border-[#e5e0d8] py-7 md:grid-cols-[160px_1fr_170px] md:gap-8">
                   <div>
                     <div className="font-display text-5xl leading-none">{new Date(`${date}T12:00:00`).getDate()}</div>
-                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#7f766a]">{formatDayLabel(date)} · J+{index}</div>
+                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#7f766a]">{formatDayLabel(date)} · {formatTimelineOffset(date, timelineStartDate)}</div>
                   </div>
                   <div>
                     {items.map((expense, itemIndex) => (
