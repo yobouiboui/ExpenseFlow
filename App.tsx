@@ -104,6 +104,15 @@ const normalizeExpense = (expense: Partial<Expense>): Expense => ({
 const normalizeExpenses = (value: unknown): Expense[] =>
   Array.isArray(value) ? value.map((expense) => normalizeExpense(expense as Partial<Expense>)) : [];
 
+const sortExpensesChronologically = (expenseList: Expense[]) =>
+  [...expenseList].sort((a, b) => {
+    const dateCompare = toSafeDate(a.date).localeCompare(toSafeDate(b.date));
+    if (dateCompare !== 0) return dateCompare;
+    const locationCompare = toSafeString(a.location).localeCompare(toSafeString(b.location), 'fr-FR');
+    if (locationCompare !== 0) return locationCompare;
+    return toSafeString(a.id).localeCompare(toSafeString(b.id));
+  });
+
 const stripReceiptPayloads = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stripReceiptPayloads);
   if (value && typeof value === 'object') {
@@ -336,6 +345,8 @@ export default function App() {
   useEffect(() => { persistJson(STORAGE_KEY_TRIP, trip); }, [trip]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
 
+  const sortedExpenses = useMemo(() => sortExpensesChronologically(expenses), [expenses]);
+
   const localStateEmpty = expenses.length === 0 && archivedTrips.length === 0 && isTripEmpty(trip);
   const syncEnabled = isSupabaseEnabled && !!supabaseUser;
 
@@ -404,11 +415,11 @@ export default function App() {
       const localArchiveIds = new Set(archivedTrips.map((archive) => archive.id));
       const newRemoteArchives = safeArray(data.archived_trips)
         .filter((archive) => !localArchiveIds.has(archive.id))
-        .map((archive) => ({ ...archive, expenses: normalizeExpenses(archive.expenses) }));
+        .map((archive) => ({ ...archive, expenses: sortExpensesChronologically(normalizeExpenses(archive.expenses)) }));
       if (newRemoteArchives.length > 0) setArchivedTrips((prev) => [...prev, ...newRemoteArchives]);
 
       if (localStateEmpty) {
-        setExpenses(normalizeExpenses(data.expenses));
+        setExpenses(sortExpensesChronologically(normalizeExpenses(data.expenses)));
         setTrip((data.trip as TripMetadata) || createNewTrip());
       }
 
@@ -455,9 +466,9 @@ export default function App() {
   }, [archivedTrips, expenses, hasHydratedFromRemote, syncEnabled, supabaseUser?.id, trip]);
 
   useEffect(() => {
-    if (expenses.length === 0) return;
+    if (sortedExpenses.length === 0) return;
 
-    const sortedDates = expenses.map((expense) => expense.date).filter(Boolean).sort();
+    const sortedDates = sortedExpenses.map((expense) => expense.date).filter(Boolean).sort();
     let suggestedDeparture = trip.departureDate;
     let suggestedReturn = trip.returnDate;
 
@@ -468,7 +479,7 @@ export default function App() {
 
     let inferredDestination = trip.destinationCountry;
     if (!trip.destinationCountry) {
-      const lastExpense = expenses[expenses.length - 1];
+      const lastExpense = sortedExpenses[sortedExpenses.length - 1];
       if (lastExpense?.location) {
         const parts = lastExpense.location.split(',');
         inferredDestination = parts.length > 1 ? parts[parts.length - 1].trim() : lastExpense.location;
@@ -490,28 +501,28 @@ export default function App() {
         destinationCountry: inferredDestination || prev.destinationCountry,
       };
     });
-  }, [expenses, trip.departureDate, trip.destinationCountry, trip.returnDate]);
+  }, [sortedExpenses, trip.departureDate, trip.destinationCountry, trip.returnDate]);
 
-  const totalAmount = useMemo(() => expenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0), [expenses]);
+  const totalAmount = useMemo(() => sortedExpenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0), [sortedExpenses]);
 
   const categoryTotals = useMemo(() => {
-    const totals = expenses.reduce<Record<string, number>>((acc, expense) => {
+    const totals = sortedExpenses.reduce<Record<string, number>>((acc, expense) => {
       const category = toSafeCategory(expense.category);
       acc[category] = (acc[category] || 0) + toSafeAmount(expense.amount);
       return acc;
     }, {});
     return Object.entries(totals).sort((a, b) => b[1] - a[1]);
-  }, [expenses]);
+  }, [sortedExpenses]);
 
   const groupedExpenses = useMemo(() => {
-    const groups = expenses.reduce<Record<string, Expense[]>>((acc, expense) => {
+    const groups = sortedExpenses.reduce<Record<string, Expense[]>>((acc, expense) => {
       const date = toSafeDate(expense.date);
       if (!acc[date]) acc[date] = [];
       acc[date].push({ ...expense, date });
       return acc;
     }, {});
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [expenses]);
+  }, [sortedExpenses]);
 
   const filteredAndSortedArchives = useMemo(() => {
     return archivedTrips
@@ -580,8 +591,8 @@ export default function App() {
     }
 
     if (data) {
-      setExpenses(normalizeExpenses(data.expenses));
-      setArchivedTrips(safeArray(data.archived_trips).map((archive) => ({ ...archive, expenses: normalizeExpenses(archive.expenses) })));
+      setExpenses(sortExpensesChronologically(normalizeExpenses(data.expenses)));
+      setArchivedTrips(safeArray(data.archived_trips).map((archive) => ({ ...archive, expenses: sortExpensesChronologically(normalizeExpenses(archive.expenses)) })));
       setTrip((data.trip as TripMetadata) || createNewTrip());
       const remoteSyncTime = data.updated_at ? new Date(data.updated_at).toISOString() : new Date().toISOString();
       setLastSyncAt(remoteSyncTime);
@@ -599,7 +610,7 @@ export default function App() {
     setSyncError(null);
     const payload = {
       user_id: supabaseUser.id,
-      expenses,
+      expenses: sortedExpenses,
       archived_trips: archivedTrips,
       trip,
       updated_at: new Date().toISOString(),
@@ -622,18 +633,18 @@ export default function App() {
 
   const handleChangeCurrency = (newCurrency: string) => {
     setTripCurrency(newCurrency);
-    setExpenses((prev) => prev.map((expense) => ({ ...expense, currency: newCurrency })));
+    setExpenses((prev) => sortExpensesChronologically(prev.map((expense) => ({ ...expense, currency: newCurrency }))));
   };
 
   const handleAddExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
     const newExpense = normalizeExpense({ ...data, id: generateId(), tripId: trip.id });
-    setExpenses((prev) => [...prev, newExpense]);
+    setExpenses((prev) => sortExpensesChronologically([...prev, newExpense]));
     showNotification('Depense ajoutee.');
   };
 
   const handleEditExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
     if (!editingExpense) return;
-    setExpenses((prev) => prev.map((expense) => (expense.id === editingExpense.id ? normalizeExpense({ ...expense, ...data }) : expense)));
+    setExpenses((prev) => sortExpensesChronologically(prev.map((expense) => (expense.id === editingExpense.id ? normalizeExpense({ ...expense, ...data }) : expense))));
     setEditingExpense(null);
     showNotification('Depense mise a jour.');
   };
@@ -661,8 +672,8 @@ export default function App() {
   };
 
   const handleCopyTripSummary = async () => {
-    if (expenses.length === 0) return;
-    const expenseLines = expenses
+    if (sortedExpenses.length === 0) return;
+    const expenseLines = sortedExpenses
       .map((expense, index) => {
         const base = `${index + 1}. ${formatShortDate(expense.date)} | ${expense.category} | ${expense.location} | ${formatAmount(expense.amount)} ${expense.currency}`;
         return expense.category === 'Hotel'
@@ -692,10 +703,10 @@ export default function App() {
     }
   };
 
-  const handleDownloadZip = async (targetExpenses = expenses) => {
+  const handleDownloadZip = async (targetExpenses = sortedExpenses) => {
     const zip = new JSZip();
     let count = 0;
-    targetExpenses.forEach((expense, index) => {
+    sortExpensesChronologically(targetExpenses).forEach((expense, index) => {
       if (!expense.receiptDataUrl) return;
       count += 1;
       const base64Data = expense.receiptDataUrl.split(',')[1];
@@ -714,11 +725,11 @@ export default function App() {
     anchor.click();
   };
 
-  const handleGenerateEmail = async (targetTrip = trip, targetExpenses = expenses) => {
+  const handleGenerateEmail = async (targetTrip = trip, targetExpenses = sortedExpenses) => {
     setIsGeneratingEmail(true);
     setIsEmailModalOpen(true);
     try {
-      const draft = await generateReimbursementEmail(targetTrip, targetExpenses);
+      const draft = await generateReimbursementEmail(targetTrip, sortExpensesChronologically(targetExpenses));
       setEmailDraft(draft);
     } catch {
       setEmailDraft({ subject: 'Erreur IA', body: "L'IA n'a pas pu rediger le rapport." });
@@ -730,8 +741,8 @@ export default function App() {
   const performArchive = () => {
     const newArchive: ArchivedTrip = {
       id: generateId(),
-      trip: { ...trip, status: 'archived', name: `${formatShortDate(expenses[0]?.date || new Date().toISOString())} - Archive` },
-      expenses: [...expenses],
+      trip: { ...trip, status: 'archived', name: `${formatShortDate(sortedExpenses[0]?.date || new Date().toISOString())} - Archive` },
+      expenses: sortExpensesChronologically(sortedExpenses),
       archivedAt: new Date().toISOString(),
     };
     setArchivedTrips((prev) => [newArchive, ...prev]);
