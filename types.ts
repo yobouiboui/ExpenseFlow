@@ -51,6 +51,8 @@ export interface EmailDraft {
 }
 
 export interface AiParsedExpense {
+  isReceipt?: boolean;
+  confidence?: number;
   date?: string;
   amount?: number;
   currency?: string;

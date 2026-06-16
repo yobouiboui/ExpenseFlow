@@ -90,7 +90,12 @@ export const parseReceiptImage = async (base64Image: string): Promise<AiParsedEx
   const mimeType    = base64Image.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,.*/)?.[1] || 'image/jpeg';
   const isPdf       = mimeType === 'application/pdf';
 
-  const schemaDescription = `Return a JSON object with fields:
+  const schemaDescription = `First decide if the document is a receipt, invoice, travel ticket, hotel folio, taxi receipt, parking receipt, fuel receipt, toll receipt, or other expense proof.
+If it is not an expense proof, return {"isReceipt": false, "confidence": 0}.
+Do not invent expense data from descriptive text, itineraries, emails, terms, or unrelated documents.
+If it is an expense proof, return a JSON object with fields:
+- isReceipt (boolean true)
+- confidence (number from 0 to 1)
 - date (string YYYY-MM-DD)
 - amount (number)
 - currency (string code e.g. EUR, USD)
@@ -123,6 +128,8 @@ If category is Hotel: hotelNights = nights stayed (default 1), hotelBreakfasts =
           type: Type.OBJECT,
           properties: {
             date:             { type: Type.STRING },
+            isReceipt:        { type: Type.BOOLEAN },
+            confidence:       { type: Type.NUMBER },
             amount:           { type: Type.NUMBER },
             currency:         { type: Type.STRING },
             location:         { type: Type.STRING },

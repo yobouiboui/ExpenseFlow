@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Expense, ExpenseCategory, ExpenseStatus } from '../types';
+import { AiParsedExpense, Expense, ExpenseCategory, ExpenseStatus } from '../types';
 import { parseReceiptImage } from '../services/geminiService';
 import { Loader2, Camera, Upload, AlertCircle, CheckCircle, Moon, Coffee } from 'lucide-react';
 
@@ -35,6 +35,17 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  class ReceiptValidationError extends Error {
+    constructor(
+      message: string,
+      public safeDataUrl: string,
+      public aiData?: AiParsedExpense
+    ) {
+      super(message);
+      this.name = 'ReceiptValidationError';
+    }
+  }
 
   const renderPdfFirstPage = async (dataUrl: string): Promise<string> => {
     const pdfjs = await import('pdfjs-dist');
@@ -95,6 +106,55 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
       reader.readAsDataURL(file);
     });
 
+  const prepareFileForAnalysis = async (file: File, dataUrl: string) => {
+    const isPdf = file.type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
+    const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : '';
+    const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(dataUrl);
+    return { safeDataUrl, aiInputDataUrl: safeDataUrl };
+  };
+
+  const isValidReceiptResult = (aiData: AiParsedExpense) => {
+    const allowedCategories = Object.values(ExpenseCategory);
+    const amount = Number(aiData.amount);
+    const hasValidAmount = Number.isFinite(amount) && amount > 0;
+    const hasValidDate = typeof aiData.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(aiData.date);
+    const hasValidLocation = typeof aiData.location === 'string' && aiData.location.trim().length >= 2 && aiData.location.trim().length <= 120;
+    const hasValidCategory = allowedCategories.includes(aiData.category as ExpenseCategory);
+    const confidence = typeof aiData.confidence === 'number' ? aiData.confidence : 1;
+
+    return aiData.isReceipt !== false && confidence >= 0.55 && hasValidAmount && hasValidDate && hasValidLocation && hasValidCategory;
+  };
+
+  const applyAiDataToManualForm = (aiData: AiParsedExpense | undefined, safeDataUrl: string) => {
+    setFormData(prev => {
+      const allowedCurrencies = ['EUR', 'USD'];
+      const aiCurrency = aiData?.currency?.toUpperCase?.() || '';
+      const safeCurrency = allowedCurrencies.includes(aiCurrency) ? aiCurrency : prev.currency;
+      return {
+        ...prev,
+        receiptDataUrl: safeDataUrl,
+        date: aiData?.date || prev.date,
+        amount: aiData?.amount || prev.amount,
+        currency: safeCurrency,
+        location: aiData?.location && aiData.location.length <= 120 ? aiData.location : prev.location,
+        category: aiData?.category || prev.category,
+        hotelNights: aiData?.hotelNights || (aiData?.category === ExpenseCategory.Hotel ? 1 : prev.hotelNights),
+        hotelBreakfasts: aiData?.hotelBreakfasts || prev.hotelBreakfasts || 0
+      };
+    });
+  };
+
+  const parseAndValidateReceipt = async (file: File, dataUrl: string) => {
+    const { safeDataUrl, aiInputDataUrl } = await prepareFileForAnalysis(file, dataUrl);
+    const aiData = await parseReceiptImage(aiInputDataUrl);
+
+    if (!isValidReceiptResult(aiData)) {
+      throw new ReceiptValidationError('Ce fichier ne ressemble pas a une facture exploitable.', safeDataUrl, aiData);
+    }
+
+    return { aiData, safeDataUrl };
+  };
+
   useEffect(() => {
     if (initialData) {
       setFormData({
@@ -147,16 +207,26 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
       setBatchCurrent(i + 1);
       try {
         const dataUrl = await readFileAsDataUrl(files[i]);
-        const isPdf = files[i].type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
-        const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : '';
-        const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(dataUrl);
-        const aiInputDataUrl = safeDataUrl;
-        const aiData = await parseReceiptImage(aiInputDataUrl);
+        const { aiData, safeDataUrl } = await parseAndValidateReceipt(files[i], dataUrl);
         onSubmit(buildExpenseFromAi(aiData, safeDataUrl, defaultCurrency));
       } catch (err) {
         errors++;
         const detail = err instanceof Error ? err.message : String(err);
-        setError(prev => prev ? prev : `Erreur IA (fichier ${i + 1}) : ${detail}`);
+        if (err instanceof ReceiptValidationError) {
+          applyAiDataToManualForm(err.aiData, err.safeDataUrl);
+          setBatchErrors(errors);
+          setBatchTotal(0);
+          setBatchCurrent(0);
+          setIsProcessing(false);
+          setError(`Traitement arrete au fichier ${i + 1}/${files.length}. ${detail} Complete la ligne manuellement, puis valide-la.`);
+          return;
+        }
+        setBatchErrors(errors);
+        setBatchTotal(0);
+        setBatchCurrent(0);
+        setIsProcessing(false);
+        setError(`Traitement arrete au fichier ${i + 1}/${files.length}. Erreur IA : ${detail}. Complete cette facture manuellement.`);
+        return;
       }
     }
 
@@ -169,15 +239,16 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
 
   /** Single-file: populate form fields for manual review before submit. */
   const handleSingleFile = (file: File, base64Data: string) => {
-    const isPdf = file.type === 'application/pdf' || base64Data.startsWith('data:application/pdf');
-
     const processAsync = async () => {
-      const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(base64Data) : '';
-      const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(base64Data);
-      const aiInputDataUrl = safeDataUrl;
+      const { safeDataUrl, aiInputDataUrl } = await prepareFileForAnalysis(file, base64Data);
       setFormData(prev => ({ ...prev, receiptDataUrl: safeDataUrl }));
       try {
         const aiData = await parseReceiptImage(aiInputDataUrl);
+        if (!isValidReceiptResult(aiData)) {
+          applyAiDataToManualForm(aiData, safeDataUrl);
+          setError('Ce fichier ne ressemble pas a une facture exploitable. Complete la ligne manuellement.');
+          return;
+        }
         setFormData(prev => {
           const allowedCurrencies = ['EUR', 'USD'];
           const aiCurrency = aiData.currency?.toUpperCase?.() || '';
