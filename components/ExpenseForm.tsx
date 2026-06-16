@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AiParsedExpense, Expense, ExpenseCategory, ExpenseStatus } from '../types';
 import { parseReceiptImage } from '../services/geminiService';
+import { prepareReceiptDataUrls } from './receiptPreparation';
 import { Loader2, Camera, Upload, AlertCircle, CheckCircle, Moon, Coffee } from 'lucide-react';
 
 interface ExpenseFormProps {
@@ -47,7 +48,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
     }
   }
 
-  const renderPdfFirstPage = async (dataUrl: string): Promise<string> => {
+  const renderPdfForAnalysis = async (dataUrl: string): Promise<string> => {
     const pdfjs = await import('pdfjs-dist');
     pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -59,23 +60,58 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
     const binary = atob(base64);
     const pdfBytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
     const pdf = await pdfjs.getDocument({ data: pdfBytes }).promise;
-    const page = await pdf.getPage(1);
-    const initialViewport = page.getViewport({ scale: 1 });
-    const targetMaxSide = 1800;
-    const scale = Math.min(2, targetMaxSide / Math.max(initialViewport.width, initialViewport.height));
-    const viewport = page.getViewport({ scale: Math.max(scale, 1) });
+    const pageCanvases: HTMLCanvasElement[] = [];
+    const targetWidth = 1200;
+    const pageGap = 24;
+    let compositeWidth = targetWidth;
+    let compositeHeight = 0;
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      const initialViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, targetWidth / initialViewport.width);
+      const viewport = page.getViewport({ scale: Math.max(scale, 1) });
+
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = Math.ceil(viewport.width);
+      pageCanvas.height = Math.ceil(viewport.height);
+      const pageCtx = pageCanvas.getContext('2d');
+
+      if (!pageCtx) {
+        throw new Error('Impossible de preparer le rendu du PDF.');
+      }
+
+      await page.render({ canvasContext: pageCtx, viewport }).promise;
+      pageCanvases.push(pageCanvas);
+      compositeWidth = Math.max(compositeWidth, pageCanvas.width);
+      compositeHeight += pageCanvas.height + (pageNumber > 1 ? pageGap : 0);
+    }
+
+    if (pageCanvases.length === 0) {
+      throw new Error('PDF invalide: aucune page exploitable.');
+    }
 
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
+    canvas.width = compositeWidth;
+    canvas.height = compositeHeight;
     const ctx = canvas.getContext('2d');
 
     if (!ctx) {
       throw new Error('Impossible de preparer le rendu du PDF.');
     }
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    return canvas.toDataURL('image/jpeg', 0.9);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let currentY = 0;
+    pageCanvases.forEach((pageCanvas, index) => {
+      if (index > 0) currentY += pageGap;
+      const offsetX = Math.floor((compositeWidth - pageCanvas.width) / 2);
+      ctx.drawImage(pageCanvas, offsetX, currentY);
+      currentY += pageCanvas.height;
+    });
+
+    return canvas.toDataURL('image/jpeg', 0.86);
   };
 
   const compressImage = (dataUrl: string, maxSize = 1600, quality = 0.82): Promise<string> => {
@@ -107,10 +143,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ initialData, defaultCurrency 
     });
 
   const prepareFileForAnalysis = async (file: File, dataUrl: string) => {
-    const isPdf = file.type === 'application/pdf' || dataUrl.startsWith('data:application/pdf');
-    const renderedPdfDataUrl = isPdf ? await renderPdfFirstPage(dataUrl) : '';
-    const safeDataUrl = isPdf ? await compressImage(renderedPdfDataUrl) : await compressImage(dataUrl);
-    return { safeDataUrl, aiInputDataUrl: safeDataUrl };
+    return prepareReceiptDataUrls({
+      fileType: file.type,
+      dataUrl,
+      renderPdfForAnalysis,
+      compressImage,
+    });
   };
 
   const isValidReceiptResult = (aiData: AiParsedExpense) => {
