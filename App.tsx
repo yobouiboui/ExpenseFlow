@@ -257,6 +257,39 @@ const formatAmount = (amount: number) =>
     maximumFractionDigits: 2,
   });
 
+const inferFileTypeFromBase64 = (base64Data: string) => {
+  try {
+    const header = atob(base64Data.replace(/\s/g, '').slice(0, 32));
+    if (header.startsWith('%PDF')) return { mimeType: 'application/pdf', extension: 'pdf' };
+    if (header.charCodeAt(0) === 0xff && header.charCodeAt(1) === 0xd8) return { mimeType: 'image/jpeg', extension: 'jpg' };
+    if (header.startsWith('\x89PNG')) return { mimeType: 'image/png', extension: 'png' };
+    if (header.startsWith('RIFF') && header.includes('WEBP')) return { mimeType: 'image/webp', extension: 'webp' };
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const getReceiptArchivePayload = (receiptDataUrl: string) => {
+  const dataUrlMatch = receiptDataUrl.match(/^data:([^;,]+)(?:;[^,]*)?,(.*)$/);
+  const declaredMimeType = dataUrlMatch?.[1]?.toLowerCase() || '';
+  const base64Data = (dataUrlMatch?.[2] || receiptDataUrl).replace(/\s/g, '');
+  if (!base64Data) return null;
+
+  const inferredType = inferFileTypeFromBase64(base64Data);
+  const mimeType = inferredType?.mimeType || declaredMimeType;
+  const extensionByMime: Record<string, string> = {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  const extension = inferredType?.extension || extensionByMime[mimeType] || 'bin';
+
+  return { base64Data, extension };
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   Meals: 'Repas',
   Hotel: 'Hotel',
@@ -771,12 +804,16 @@ export default function App() {
   const handleDownloadZip = async (targetExpenses = sortedExpenses) => {
     const zip = new JSZip();
     let count = 0;
+    let skipped = 0;
     sortExpensesChronologically(targetExpenses).forEach((expense, index) => {
       if (!expense.receiptDataUrl) return;
+      const payload = getReceiptArchivePayload(expense.receiptDataUrl);
+      if (!payload) {
+        skipped += 1;
+        return;
+      }
       count += 1;
-      const base64Data = expense.receiptDataUrl.split(',')[1];
-      const extension = expense.receiptDataUrl.includes('pdf') ? 'pdf' : 'jpg';
-      zip.file(`facture_${expense.date}_${index + 1}.${extension}`, base64Data, { base64: true });
+      zip.file(`facture_${expense.date}_${index + 1}.${payload.extension}`, payload.base64Data, { base64: true });
     });
     if (count === 0) {
       window.alert("Aucun justificatif n'est disponible.");
@@ -788,6 +825,9 @@ export default function App() {
     anchor.href = url;
     anchor.download = 'justificatifs_frais.zip';
     anchor.click();
+    if (skipped > 0) {
+      showNotification(`${skipped} justificatif(s) invalide(s) ignore(s).`);
+    }
   };
 
   const handleGenerateEmail = async (targetTrip = trip, targetExpenses = sortedExpenses) => {
