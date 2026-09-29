@@ -363,6 +363,7 @@ function SupabaseConfigPanel({
   const showContent = forceOpen || isOpen;
   const isSaved = configUrl.trim().replace(/\/+$/, '') === activeSupabaseUrl && configKey.trim() === activeSupabaseKey;
   const isValidUrl = /^https:\/\/[^\s]+$/.test(configUrl.trim());
+  const isSecretKey = /^sb_secret_/.test(configKey.trim()) || /service_role/.test(configKey);
 
   return (
     <div className="overflow-hidden border border-[#d8d0c3]">
@@ -385,22 +386,24 @@ function SupabaseConfigPanel({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#4a443c]">Cle anonyme</label>
+            <label className="mb-1 block text-xs font-medium text-[#4a443c]">Cle publishable (anon)</label>
             <input
               type="password"
               value={configKey}
               onChange={(e) => setConfigKey(e.target.value)}
-              placeholder="eyJ..."
+              placeholder="sb_publishable_... ou eyJ..."
               className="w-full border border-[#d8d0c3] bg-[#fbf7f0] px-3 py-2 text-xs outline-none focus:border-[#1a1a1a]"
             />
           </div>
           <p className="text-[11px] text-[#7f766a]">
-            {isSaved
+            {isSecretKey
+              ? 'Cle secrete interdite dans le navigateur : utilise la cle publishable (sb_publishable_...).'
+              : isSaved
               ? `Projet actif : ${activeSupabaseUrl.replace(/^https:\/\//, '')} — conserve dans ce navigateur.`
               : !isValidUrl && configUrl ? "L'URL doit commencer par https://" : 'Modifications non enregistrees.'}
           </p>
           <div className="flex gap-2">
-            <button type="button" onClick={onSave} disabled={!isValidUrl || !configKey.trim() || isSaved} className="flex-1 border border-[#1f4f99] bg-[#1f4f99] px-3 py-2 text-xs uppercase tracking-[0.15em] text-[#f7f3ea] disabled:opacity-40">
+            <button type="button" onClick={onSave} disabled={!isValidUrl || !configKey.trim() || isSaved || isSecretKey} className="flex-1 border border-[#1f4f99] bg-[#1f4f99] px-3 py-2 text-xs uppercase tracking-[0.15em] text-[#f7f3ea] disabled:opacity-40">
               {isSaved ? 'Enregistree' : 'Sauvegarder'}
             </button>
             <button type="button" onClick={onClear} className="border border-[#0a0a0a] px-3 py-2 text-xs uppercase tracking-[0.15em]">
