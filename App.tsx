@@ -638,6 +638,8 @@ export default function App() {
       suggestedDeparture = `${sortedDates[0]}T08:00`;
       suggestedReturn = `${sortedDates[sortedDates.length - 1]}T20:00`;
     }
+    if (trip.startDateManual) suggestedDeparture = trip.startDateManual;
+    if (trip.endDateManual) suggestedReturn = trip.endDateManual;
 
     let inferredDestination = trip.destinationCountry;
     if (!trip.destinationCountry) {
@@ -663,7 +665,7 @@ export default function App() {
         destinationCountry: inferredDestination || prev.destinationCountry,
       };
     });
-  }, [timelineExpenses, timelineReferenceYear, trip.departureDate, trip.destinationCountry, trip.returnDate]);
+  }, [timelineExpenses, timelineReferenceYear, trip.departureDate, trip.destinationCountry, trip.returnDate, trip.startDateManual, trip.endDateManual]);
 
   const totalAmount = useMemo(
     () => sortedExpenses.reduce((sum, e) => sum + convertToBase(toSafeAmount(e.amount), e.currency, exchangeRates, tripCurrency), 0),
@@ -794,7 +796,12 @@ export default function App() {
   };
 
   const handleUpdateTrip = (field: keyof TripMetadata, value: string) => {
-    setTrip((prev) => ({ ...prev, [field]: value }));
+    setTrip((prev) => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'departureDate' ? { startDateManual: value || null } : {}),
+      ...(field === 'returnDate' ? { endDateManual: value || null } : {}),
+    }));
   };
 
   const handleChangeCurrency = (newCurrency: string) => {
