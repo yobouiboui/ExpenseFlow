@@ -49,6 +49,8 @@ import {
 } from './services/geminiService';
 import { ArchivedTrip, EmailDraft, Expense, ExpenseCategory, ExpenseStatus, TripMetadata } from './types';
 
+declare const __APP_VERSION__: string;
+
 const STORAGE_KEY_EXPENSES = 'expenseFlow_expenses_prod_v1';
 const STORAGE_KEY_ARCHIVE = 'expenseFlow_archive_prod_v1';
 const STORAGE_KEY_TRIP = 'expenseFlow_trip_prod_v1';
@@ -1412,6 +1414,7 @@ export default function App() {
               </div>
             </div>
           </div>
+          <p className="font-mono-ui pt-2 text-center text-[10px] uppercase tracking-[0.2em] text-[#8b8175]">Version {__APP_VERSION__}</p>
         </div>
       </Modal>
 
