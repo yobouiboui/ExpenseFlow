@@ -28,8 +28,12 @@ import ExpenseTable from './components/ExpenseTable';
 import LoginScreen from './components/LoginScreen';
 import Modal from './components/Modal';
 import {
+  activeSupabaseKey,
+  activeSupabaseUrl,
   clearSupabaseConfig,
+  hasCustomSupabaseConfig,
   isSupabaseEnabled,
+  SUPABASE_FLASH_KEY,
   saveSupabaseConfig,
   supabase,
 } from './services/supabaseClient';
@@ -357,12 +361,14 @@ function SupabaseConfigPanel({
   forceOpen,
 }: SupabaseConfigPanelProps) {
   const showContent = forceOpen || isOpen;
+  const isSaved = configUrl.trim().replace(/\/+$/, '') === activeSupabaseUrl && configKey.trim() === activeSupabaseKey;
+  const isValidUrl = /^https:\/\/[^\s]+$/.test(configUrl.trim());
 
   return (
     <div className="overflow-hidden border border-[#d8d0c3]">
       {!forceOpen && (
         <button type="button" onClick={onToggle} className="flex w-full items-center justify-between bg-[#f4eee4] px-4 py-3 text-xs font-medium text-[#4a443c]">
-          <span>Configurer Supabase</span>
+          <span>Configurer Supabase <span className="ml-2 text-[10px] uppercase tracking-[0.15em] text-[#1f4f99]">{hasCustomSupabaseConfig ? 'Enregistree' : 'Par defaut'}</span></span>
           <span>{isOpen ? '▲' : '▼'}</span>
         </button>
       )}
@@ -388,9 +394,14 @@ function SupabaseConfigPanel({
               className="w-full border border-[#d8d0c3] bg-[#fbf7f0] px-3 py-2 text-xs outline-none focus:border-[#1a1a1a]"
             />
           </div>
+          <p className="text-[11px] text-[#7f766a]">
+            {isSaved
+              ? `Projet actif : ${activeSupabaseUrl.replace(/^https:\/\//, '')} — conserve dans ce navigateur.`
+              : !isValidUrl && configUrl ? "L'URL doit commencer par https://" : 'Modifications non enregistrees.'}
+          </p>
           <div className="flex gap-2">
-            <button type="button" onClick={onSave} disabled={!configUrl || !configKey} className="flex-1 border border-[#1f4f99] bg-[#1f4f99] px-3 py-2 text-xs uppercase tracking-[0.15em] text-[#f7f3ea] disabled:opacity-40">
-              Sauvegarder
+            <button type="button" onClick={onSave} disabled={!isValidUrl || !configKey.trim() || isSaved} className="flex-1 border border-[#1f4f99] bg-[#1f4f99] px-3 py-2 text-xs uppercase tracking-[0.15em] text-[#f7f3ea] disabled:opacity-40">
+              {isSaved ? 'Enregistree' : 'Sauvegarder'}
             </button>
             <button type="button" onClick={onClear} className="border border-[#0a0a0a] px-3 py-2 text-xs uppercase tracking-[0.15em]">
               Reset
@@ -435,7 +446,7 @@ export default function App() {
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
-  const [syncEmail, setSyncEmail] = useState('');
+  const [syncEmail, setSyncEmail] = useState(() => localStorage.getItem('expenseFlow_sync_email') || '');
   const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -453,8 +464,8 @@ export default function App() {
   const [openAIKeyInput, setOpenAIKeyInput] = useState(() => getStoredOpenAIKey());
   const [openAIKeySaved, setOpenAIKeySaved] = useState(Boolean(getStoredOpenAIKey()));
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
-  const [configUrl, setConfigUrl] = useState('');
-  const [configKey, setConfigKey] = useState('');
+  const [configUrl, setConfigUrl] = useState(activeSupabaseUrl);
+  const [configKey, setConfigKey] = useState(activeSupabaseKey);
 
   const aiKeyActive = aiProvider === 'gemini' ? geminiKeySaved : openAIKeySaved;
   const departureInputRef = useRef<HTMLInputElement>(null);
@@ -465,6 +476,16 @@ export default function App() {
   useEffect(() => { persistJson(STORAGE_KEY_ARCHIVE, archivedTrips); }, [archivedTrips]);
   useEffect(() => { persistJson(STORAGE_KEY_TRIP, trip); }, [trip]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
+  useEffect(() => { localStorage.setItem('expenseFlow_sync_email', syncEmail.trim()); }, [syncEmail]);
+
+  useEffect(() => {
+    const flash = sessionStorage.getItem(SUPABASE_FLASH_KEY);
+    if (!flash) return;
+    sessionStorage.removeItem(SUPABASE_FLASH_KEY);
+    setIsSyncModalOpen(true);
+    setIsConfigPanelOpen(true);
+    showNotification(flash);
+  }, []);
 
   useEffect(() => {
     const ts = parseInt(localStorage.getItem('expenseFlow_exchangeRates_ts') || '0');

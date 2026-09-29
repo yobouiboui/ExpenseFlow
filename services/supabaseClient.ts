@@ -26,10 +26,17 @@ export const supabase =
 
 export const isSupabaseEnabled = Boolean(supabaseUrl && supabaseAnonKey);
 
+export const activeSupabaseUrl = supabaseUrl;
+export const activeSupabaseKey = supabaseAnonKey;
+export const hasCustomSupabaseConfig = Boolean(localStorage.getItem(LS_KEY_URL) && localStorage.getItem(LS_KEY_KEY));
+
+export const SUPABASE_FLASH_KEY = 'expenseFlow_supabase_flash';
+
 /** Persist new credentials and reload so the module re-initialises. */
 export function saveSupabaseConfig(url: string, key: string): void {
-  localStorage.setItem(LS_KEY_URL, url.trim());
+  localStorage.setItem(LS_KEY_URL, url.trim().replace(/\/+$/, ''));
   localStorage.setItem(LS_KEY_KEY, key.trim());
+  sessionStorage.setItem(SUPABASE_FLASH_KEY, 'Configuration Supabase enregistree.');
   window.location.reload();
 }
 
@@ -37,5 +44,6 @@ export function saveSupabaseConfig(url: string, key: string): void {
 export function clearSupabaseConfig(): void {
   localStorage.removeItem(LS_KEY_URL);
   localStorage.removeItem(LS_KEY_KEY);
+  sessionStorage.setItem(SUPABASE_FLASH_KEY, 'Configuration Supabase par defaut retablie.');
   window.location.reload();
 }
