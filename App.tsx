@@ -69,11 +69,20 @@ const safeJsonParse = <T,>(value: string | null, fallback: T): T => {
 
 const toSafeString = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 
+// Approximate fallback rates relative to EUR — updated when live fetch succeeds
+const FALLBACK_RATES: Record<string, number> = {
+  USD: 1.08, GBP: 0.86, CHF: 0.94, JPY: 162, CAD: 1.47, AUD: 1.65,
+  SEK: 11.5, NOK: 11.7, DKK: 7.46, PLN: 4.27, CZK: 25.3, HUF: 395,
+  CNY: 7.82, MXN: 20.5, BRL: 6.5, INR: 90, SGD: 1.44, HKD: 8.4,
+  NZD: 1.79, ZAR: 20.0, AED: 3.97, MYR: 4.95, THB: 38.5,
+};
+
 // rates are relative to EUR (1 EUR = rates[X] units of X)
 const convertToBase = (amount: number, fromCurrency: string, rates: Record<string, number>, base: string): number => {
   if (!fromCurrency || fromCurrency === base) return amount;
-  const fromRate = fromCurrency === 'EUR' ? 1 : (rates[fromCurrency] ?? 1);
-  const baseRate = base === 'EUR' ? 1 : (rates[base] ?? 1);
+  const merged = { ...FALLBACK_RATES, ...rates }; // live rates override fallback
+  const fromRate = fromCurrency === 'EUR' ? 1 : (merged[fromCurrency] ?? 1);
+  const baseRate = base === 'EUR' ? 1 : (merged[base] ?? 1);
   return (amount / fromRate) * baseRate;
 };
 
