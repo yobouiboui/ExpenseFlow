@@ -69,6 +69,14 @@ const safeJsonParse = <T,>(value: string | null, fallback: T): T => {
 
 const toSafeString = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback);
 
+// rates are relative to EUR (1 EUR = rates[X] units of X)
+const convertToBase = (amount: number, fromCurrency: string, rates: Record<string, number>, base: string): number => {
+  if (!fromCurrency || fromCurrency === base) return amount;
+  const fromRate = fromCurrency === 'EUR' ? 1 : (rates[fromCurrency] ?? 1);
+  const baseRate = base === 'EUR' ? 1 : (rates[base] ?? 1);
+  return (amount / fromRate) * baseRate;
+};
+
 const toSafeAmount = (value: unknown) => {
   const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -420,6 +428,9 @@ export default function App() {
   const [hasHydratedFromRemote, setHasHydratedFromRemote] = useState(false);
   const [archiveSearchTerm, setArchiveSearchTerm] = useState('');
   const [tripCurrency, setTripCurrency] = useState(() => localStorage.getItem(STORAGE_KEY_CURRENCY) || 'EUR');
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('expenseFlow_exchangeRates') || '{}'); } catch { return {}; }
+  });
   const [geminiKeyInput, setGeminiKeyInput] = useState(() => getStoredGeminiKey());
   const [geminiKeySaved, setGeminiKeySaved] = useState(Boolean(getStoredGeminiKey()));
   const [aiProvider, setAiProvider] = useState(() => getStoredProvider());
@@ -439,6 +450,21 @@ export default function App() {
   useEffect(() => { persistJson(STORAGE_KEY_ARCHIVE, archivedTrips); }, [archivedTrips]);
   useEffect(() => { persistJson(STORAGE_KEY_TRIP, trip); }, [trip]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_CURRENCY, tripCurrency); }, [tripCurrency]);
+
+  useEffect(() => {
+    const ts = parseInt(localStorage.getItem('expenseFlow_exchangeRates_ts') || '0');
+    if (Date.now() - ts < 86_400_000) return; // use cache if < 24h old
+    fetch('https://api.frankfurter.app/latest?from=EUR')
+      .then(r => r.json())
+      .then(data => {
+        if (data?.rates) {
+          setExchangeRates(data.rates);
+          localStorage.setItem('expenseFlow_exchangeRates', JSON.stringify(data.rates));
+          localStorage.setItem('expenseFlow_exchangeRates_ts', Date.now().toString());
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const sortedExpenses = useMemo(() => sortExpensesChronologically(expenses), [expenses]);
   const timelineReferenceYear = useMemo(() => getReferenceYear(sortedExpenses, trip), [sortedExpenses, trip.departureDate]);
@@ -600,16 +626,19 @@ export default function App() {
     });
   }, [timelineExpenses, timelineReferenceYear, trip.departureDate, trip.destinationCountry, trip.returnDate]);
 
-  const totalAmount = useMemo(() => sortedExpenses.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0), [sortedExpenses]);
+  const totalAmount = useMemo(
+    () => sortedExpenses.reduce((sum, e) => sum + convertToBase(toSafeAmount(e.amount), e.currency, exchangeRates, tripCurrency), 0),
+    [sortedExpenses, exchangeRates, tripCurrency],
+  );
 
   const categoryTotals = useMemo(() => {
     const totals = sortedExpenses.reduce<Record<string, number>>((acc, expense) => {
       const category = toSafeCategory(expense.category);
-      acc[category] = (acc[category] || 0) + toSafeAmount(expense.amount);
+      acc[category] = (acc[category] || 0) + convertToBase(toSafeAmount(expense.amount), expense.currency, exchangeRates, tripCurrency);
       return acc;
     }, {});
     return Object.entries(totals).sort((a, b) => b[1] - a[1]);
-  }, [sortedExpenses]);
+  }, [sortedExpenses, exchangeRates, tripCurrency]);
 
   const groupedExpenses = useMemo(() => {
     const groups = timelineExpenses.reduce<Record<string, Expense[]>>((acc, expense) => {
@@ -1085,8 +1114,11 @@ export default function App() {
                   </div>
                   <div className="text-left md:text-right">
                     <div className="font-mono-ui mb-2 text-[10px] uppercase tracking-[0.2em] text-[#7f766a]">Sous-total</div>
-                    <div className="font-display text-4xl leading-none tracking-tight">{formatAmount(items.reduce((sum, expense) => sum + toSafeAmount(expense.amount), 0))}</div>
-                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#8b8175]">{tripCurrency}</div>
+                    <div className="font-display text-4xl leading-none tracking-tight">{formatAmount(items.reduce((sum, expense) => sum + convertToBase(toSafeAmount(expense.amount), expense.currency, exchangeRates, tripCurrency), 0))}</div>
+                    <div className="font-mono-ui mt-2 text-[10px] uppercase tracking-[0.18em] text-[#8b8175]">
+                      {tripCurrency}
+                      {items.some(e => e.currency && e.currency !== tripCurrency) && <span className="ml-1 opacity-60">≈</span>}
+                    </div>
                   </div>
                 </div>
               ))}
