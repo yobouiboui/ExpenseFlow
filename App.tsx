@@ -6,6 +6,7 @@ import {
   CheckCircle,
   Clock,
   Eye,
+  Files,
   FileText,
   Globe,
   LogOut,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import JSZip from 'jszip';
+import BatchImport from './components/BatchImport';
 import ExpenseForm from './components/ExpenseForm';
 import ExpenseTable from './components/ExpenseTable';
 import LoginScreen from './components/LoginScreen';
@@ -421,6 +423,8 @@ export default function App() {
   });
   const [notification, setNotification] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isBatchOpen, setIsBatchOpen] = useState(false);
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -778,6 +782,12 @@ export default function App() {
     showNotification('Depense ajoutee.');
   };
 
+  const handleAddExpenses = (list: Omit<Expense, 'id' | 'tripId'>[]) => {
+    const newExpenses = list.map((data) => normalizeExpense({ ...data, id: generateId(), tripId: trip.id }));
+    setExpenses((prev) => sortExpensesChronologically([...prev, ...newExpenses]));
+    showNotification(`${newExpenses.length} depense(s) ajoutee(s).`);
+  };
+
   const handleEditExpense = (data: Omit<Expense, 'id' | 'tripId'>) => {
     if (!editingExpense) return;
     setExpenses((prev) => sortExpensesChronologically(prev.map((expense) => (expense.id === editingExpense.id ? normalizeExpense({ ...expense, ...data }) : expense))));
@@ -1070,6 +1080,7 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => { setEditingExpense(null); setIsFormOpen(true); }} className="flex items-center gap-2 border border-[#1f4f99] bg-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#f7f3ea]"><Plus size={14} /> Nouvelle ligne</button>
+                  <button onClick={() => setIsBatchOpen(true)} className="flex items-center gap-2 border border-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#1f4f99]"><Files size={14} /> Factures multiples</button>
                   <button onClick={() => handleGenerateEmail()} disabled={expenses.length === 0} className="flex items-center gap-2 border border-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#1f4f99] disabled:opacity-40"><Sparkles size={14} /> Rapport IA</button>
                   <button onClick={() => handleDownloadZip()} disabled={expenses.length === 0} className="flex items-center gap-2 border border-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#1f4f99] disabled:opacity-40"><Paperclip size={14} /> Justificatifs</button>
                   <button onClick={() => { if (syncEnabled) handlePushToSupabase(); else { setIsSyncModalOpen(true); showNotification('Active la synchronisation pour sauvegarder.'); } }} disabled={isSyncing} className="flex items-center gap-2 border border-[#1f4f99] px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-[#1f4f99] disabled:opacity-40"><Save size={14} /> Sauvegarder</button>
@@ -1177,6 +1188,10 @@ export default function App() {
           </section>
         )}
       </div>
+
+      <Modal isOpen={isBatchOpen} onClose={() => { if (!isBatchRunning) setIsBatchOpen(false); }} title="Factures multiples">
+        <BatchImport defaultCurrency={tripCurrency} onImport={handleAddExpenses} onRunningChange={setIsBatchRunning} onClose={() => setIsBatchOpen(false)} />
+      </Modal>
 
       <Modal isOpen={isFormOpen} onClose={() => { setIsFormOpen(false); setEditingExpense(null); }} title={editingExpense ? 'Modifier la facture' : 'Nouvelle facture intelligente'}>
         <ExpenseForm initialData={editingExpense} defaultCurrency={tripCurrency} onClose={() => { setIsFormOpen(false); setEditingExpense(null); }} onSubmit={editingExpense ? handleEditExpense : handleAddExpense} />
